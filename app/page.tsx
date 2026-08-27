@@ -7,6 +7,7 @@
  * authenticates from inside one of the apps.
  */
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
 import { LineChart, Zap } from 'lucide-react';
@@ -24,12 +25,56 @@ function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
 }
 
+type HomeCardKey = 'digits' | 'robot';
+
+/**
+ * Premium hover micro-interaction for the two entry cards below.
+ *
+ * A plain CSS :hover can't dim the *other* card, so the hovered key is
+ * tracked in React state and used to compute each card's transform/opacity.
+ * The existing `.panel-glow` breathing animation is left completely alone
+ * (swapping its keyframes on hover would make the glow jump instead of
+ * smoothly intensify) — instead an absolutely-positioned overlay with its
+ * own brighter glow fades in/out on top of it via a plain opacity
+ * transition, which is what actually reads as "the glow gets brighter".
+ */
+function useHomeCardHover() {
+  const [hovered, setHovered] = useState<HomeCardKey | null>(null);
+
+  function cardProps(key: HomeCardKey) {
+    const isHovered = hovered === key;
+    const isDimmed = hovered !== null && hovered !== key;
+    return {
+      onMouseEnter: () => setHovered(key),
+      onMouseLeave: () =>
+        setHovered((current: HomeCardKey | null) => (current === key ? null : current)),
+      onFocus: () => setHovered(key),
+      onBlur: () =>
+        setHovered((current: HomeCardKey | null) => (current === key ? null : current)),
+      style: {
+        transform: isHovered ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
+        opacity: isDimmed ? 0.92 : 1,
+      },
+      className:
+        'relative transition-[transform,opacity] duration-300 ease-out will-change-transform',
+      overlayClassName:
+        'pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ease-out shadow-[0_14px_32px_-12px_rgba(0,0,0,0.35),0_0_0_1px_rgba(59,130,246,0.55),0_0_26px_4px_rgba(59,130,246,0.45),0_0_56px_14px_rgba(59,130,246,0.22)]' +
+        (isHovered ? ' opacity-100' : ' opacity-0'),
+    };
+  }
+
+  return cardProps;
+}
+
 export default function HomePage() {
   const logoSrc = useLogoSrc();
   const { localize } = useAppTranslations();
   const { auth } = useDerivWSContext();
   const { authState, accounts, activeAccount, login, signUp, logout, switchAccount } = auth;
   const appName = resolveAppName();
+  const getHomeCardProps = useHomeCardHover();
+  const digitsCard = getHomeCardProps('digits');
+  const robotCard = getHomeCardProps('robot');
 
   return (
     <main className="relative flex flex-col bg-background/30 max-lg:h-dvh max-lg:overflow-y-auto lg:min-h-dvh">
@@ -67,7 +112,15 @@ export default function HomePage() {
         </p>
 
         <div className="mt-10 grid w-full max-w-2xl gap-4 sm:grid-cols-2">
-          <Card className="panel-glow bg-card/30 backdrop-blur-md text-left">
+          <Card
+            className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
+            style={digitsCard.style}
+            onMouseEnter={digitsCard.onMouseEnter}
+            onMouseLeave={digitsCard.onMouseLeave}
+            onFocus={digitsCard.onFocus}
+            onBlur={digitsCard.onBlur}
+          >
+            <div aria-hidden className={digitsCard.overlayClassName} />
             <CardContent className="flex flex-col gap-3 pt-6">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-primary">
                 <LineChart className="h-5 w-5" />
@@ -86,7 +139,15 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          <Card className="panel-glow bg-card/30 backdrop-blur-md text-left">
+          <Card
+            className={`panel-glow bg-card/30 backdrop-blur-md text-left ${robotCard.className}`}
+            style={robotCard.style}
+            onMouseEnter={robotCard.onMouseEnter}
+            onMouseLeave={robotCard.onMouseLeave}
+            onFocus={robotCard.onFocus}
+            onBlur={robotCard.onBlur}
+          >
+            <div aria-hidden className={robotCard.overlayClassName} />
             <CardContent className="flex flex-col gap-3 pt-6">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-primary">
                 <Zap className="h-5 w-5" />
