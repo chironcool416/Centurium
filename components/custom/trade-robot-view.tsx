@@ -377,7 +377,7 @@ export function TradeRobotView({
   return (
     <div className="w-full max-w-[1600px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_300px] gap-4">
       {/* Left: Robot settings */}
-      <Card className="h-fit bg-card/60 backdrop-blur-md">
+      <Card className="h-fit bg-card/30 backdrop-blur-md">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
             <Localize i18n_default_text="Robot settings" />
@@ -547,7 +547,7 @@ export function TradeRobotView({
       </Card>
 
       {/* Center: analysis */}
-      <Card className="h-fit bg-card/60 backdrop-blur-md">
+      <Card className="h-fit bg-card/30 backdrop-blur-md">
         <CardHeader className="pb-0">
           <div className="flex items-center gap-5 border-b border-border">
             {(
@@ -675,7 +675,7 @@ export function TradeRobotView({
       </Card>
 
       {/* Right: Manual mode */}
-      <Card className="h-fit bg-card/60 backdrop-blur-md">
+      <Card className="h-fit bg-card/30 backdrop-blur-md">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
             <Localize i18n_default_text="Manual mode" />
