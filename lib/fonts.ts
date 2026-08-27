@@ -9,6 +9,7 @@ import {
   Montserrat,
   Raleway,
   Source_Sans_3,
+  Cinzel,
 } from 'next/font/google';
 
 /**
@@ -37,6 +38,11 @@ const openSans   = Open_Sans(   { subsets: ['latin'] });
 const montserrat = Montserrat(  { subsets: ['latin'] });
 const raleway    = Raleway(     { subsets: ['latin'] });
 const sourceSans3 = Source_Sans_3({ subsets: ['latin'] });
+
+// A distinctive classical-serif display font, reserved for the brand
+// name in the header — matches the Roman/centurion identity without
+// changing the body font used throughout the rest of the app.
+export const brandDisplay = Cinzel({ subsets: ['latin'], weight: ['600', '700'] });
 
 /**
  * Maps app-builder font display names to their next/font className.
