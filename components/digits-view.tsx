@@ -355,6 +355,7 @@ export function DigitsView({
                             digitStats={digitStats}
                             selectedDigit={selectedDigit}
                             onDigitSelect={setSelectedDigit}
+                            lastDigit={lastDigit}
                           />
                         </div>
                       )}
