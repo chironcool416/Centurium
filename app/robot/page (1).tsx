@@ -41,7 +41,7 @@ export default function RobotPage() {
       />
 
       {/* Spacer to push content below the fixed header */}
-      <div className={isAuthenticated ? 'h-[116px] shrink-0' : 'h-[106px] shrink-0'} />
+      <div className={isAuthenticated ? 'h-[76px] shrink-0' : 'h-[66px] shrink-0'} />
 
       <div className="flex-1 pb-16">
         <TradeRobotView
