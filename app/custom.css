@@ -22,3 +22,36 @@
     animation: none;
   }
 }
+
+/* Soft, slowly-breathing glow around a panel — outlines it in the theme's
+   primary color with a layered box-shadow (tight edge + wide bloom). */
+@keyframes panel-glow-pulse {
+  0%,
+  100% {
+    border-color: rgb(var(--primary) / 0.5);
+    box-shadow:
+      0 0 0 1px rgb(var(--primary) / 0.25),
+      0 0 20px 2px rgb(var(--primary) / 0.35),
+      0 0 48px 10px rgb(var(--primary) / 0.16);
+  }
+  50% {
+    border-color: rgb(var(--primary) / 0.75);
+    box-shadow:
+      0 0 0 1px rgb(var(--primary) / 0.4),
+      0 0 26px 4px rgb(var(--primary) / 0.5),
+      0 0 60px 14px rgb(var(--primary) / 0.22);
+  }
+}
+.panel-glow {
+  border-color: rgb(var(--primary) / 0.5);
+  box-shadow:
+    0 0 0 1px rgb(var(--primary) / 0.25),
+    0 0 20px 2px rgb(var(--primary) / 0.35),
+    0 0 48px 10px rgb(var(--primary) / 0.16);
+  animation: panel-glow-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-glow {
+    animation: none;
+  }
+}
