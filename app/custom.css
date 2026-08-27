@@ -23,31 +23,31 @@
   }
 }
 
-/* Soft, slowly-breathing glow around a panel — outlines it in the theme's
-   primary color with a layered box-shadow (tight edge + wide bloom). */
+/* Soft, slowly-breathing glow around a panel — outlines it in blue with a
+   layered box-shadow (tight edge + wide bloom), kept subtle. */
 @keyframes panel-glow-pulse {
   0%,
   100% {
-    border-color: rgb(var(--primary) / 0.5);
+    border-color: rgb(59 130 246 / 0.3);
     box-shadow:
-      0 0 0 1px rgb(var(--primary) / 0.25),
-      0 0 20px 2px rgb(var(--primary) / 0.35),
-      0 0 48px 10px rgb(var(--primary) / 0.16);
+      0 0 0 1px rgb(59 130 246 / 0.12),
+      0 0 12px 1px rgb(59 130 246 / 0.18),
+      0 0 28px 6px rgb(59 130 246 / 0.08);
   }
   50% {
-    border-color: rgb(var(--primary) / 0.75);
+    border-color: rgb(59 130 246 / 0.45);
     box-shadow:
-      0 0 0 1px rgb(var(--primary) / 0.4),
-      0 0 26px 4px rgb(var(--primary) / 0.5),
-      0 0 60px 14px rgb(var(--primary) / 0.22);
+      0 0 0 1px rgb(59 130 246 / 0.2),
+      0 0 16px 2px rgb(59 130 246 / 0.26),
+      0 0 34px 8px rgb(59 130 246 / 0.12);
   }
 }
 .panel-glow {
-  border-color: rgb(var(--primary) / 0.5);
+  border-color: rgb(59 130 246 / 0.3);
   box-shadow:
-    0 0 0 1px rgb(var(--primary) / 0.25),
-    0 0 20px 2px rgb(var(--primary) / 0.35),
-    0 0 48px 10px rgb(var(--primary) / 0.16);
+    0 0 0 1px rgb(59 130 246 / 0.12),
+    0 0 12px 1px rgb(59 130 246 / 0.18),
+    0 0 28px 6px rgb(59 130 246 / 0.08);
   animation: panel-glow-pulse 3s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
