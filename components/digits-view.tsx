@@ -294,7 +294,7 @@ export function DigitsView({
             {isLoading ? (
               <Skeleton className="h-[420px] w-full rounded-xl" />
             ) : (
-              <Card className="overflow-y-auto">
+              <Card className="overflow-y-auto bg-card/60 backdrop-blur-md">
                 <CardContent className="pt-4">{renderConfigurable()}</CardContent>
               </Card>
             )}
@@ -324,7 +324,7 @@ export function DigitsView({
                 />
               </div>
 
-              <Card className="shrink-0 border shadow-sm mb-12">
+              <Card className="shrink-0 border shadow-sm mb-12 bg-card/60 backdrop-blur-md">
                 <CardContent className="flex flex-col p-3 pt-3 sm:p-6 sm:pt-4 pb-2 sm:pb-6">
                   <div
                     className={`lg:grid lg:overflow-visible ${tradeType !== 'even-odd' ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}
