@@ -247,15 +247,24 @@ export function DigitsView({
 
   return (
     <main
-      className={`flex flex-col max-lg:h-dvh max-lg:overflow-y-auto lg:overflow-visible ${
-        editMode ? 'bg-muted/50' : 'bg-background'
+      className={`relative flex flex-col max-lg:h-dvh max-lg:overflow-y-auto lg:overflow-visible ${
+        editMode ? 'bg-muted/50' : 'bg-background/30'
       }`}
     >
+      {!editMode && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 -z-10 bg-cover bg-center"
+          style={{ backgroundImage: "url('/hero-bg.jpg')" }}
+        >
+          <div className="absolute inset-0 bg-background/65" />
+        </div>
+      )}
       {editMode ? (
         // Edit mode: header is fixed and NOT editable. On hover, grey it out with
         // a "Not editable" hint. The overlay is pointer-events-none so the header
         // (incl. the dark/light theme toggle) stays clickable.
-        <div className="group/hdr fixed left-0 right-0 top-0 z-50" style={{ height: 66 }}>
+        <div className="group/hdr fixed left-0 right-0 top-10 z-50" style={{ height: 66 }}>
           {headerEl}
           <div className="pointer-events-none absolute inset-0 z-[60] opacity-0 ring-2 ring-inset ring-muted-foreground/25 transition-opacity group-hover/hdr:opacity-100">
             <span className="absolute left-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium text-muted-foreground shadow-sm ring-1 ring-border">
@@ -268,7 +277,7 @@ export function DigitsView({
         headerEl
       )}
       {/* Spacer to push content below fixed header — taller when authenticated (account bar visible) */}
-      <div className={authState === 'authenticated' ? 'h-[76px] shrink-0' : 'h-[66px] shrink-0'} />
+      <div className={authState === 'authenticated' ? 'h-[116px] shrink-0' : 'h-[106px] shrink-0'} />
 
       {appConfig ? (
         isMobile ? (
