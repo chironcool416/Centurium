@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { Home, Zap } from 'lucide-react';
 import { Localize } from '@deriv-com/translations';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -8,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { LANGUAGE_LOCALES } from '@/lib/i18n';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { LanguageSwitcher } from '@/components/custom/language-switcher';
+import { brandDisplay } from '@/lib/fonts';
 import type { AuthState, DerivAccount } from '@deriv/core';
 
 interface HeaderProps {
@@ -69,6 +73,67 @@ function resolveShowAppName(showAppName?: boolean): boolean {
   return process.env.NEXT_PUBLIC_DERIV_SHOW_APP_NAME !== 'false';
 }
 
+const inlineNavLinkClass = (active: boolean) =>
+  cn(
+    'flex items-center justify-center w-8 h-8 rounded-lg transition-colors duration-300',
+    active ? 'bg-teal-600' : 'bg-transparent hover:bg-muted'
+  );
+
+/** Preserves the current query string (e.g. ?symbol=...) when switching pages. */
+function HeaderNavLinks({ isHome, isOperations }: { isHome: boolean; isOperations: boolean }) {
+  const searchParams = useSearchParams();
+  const query = searchParams?.toString();
+  const suffix = query ? `?${query}` : '';
+  return (
+    <>
+      <Link href={`/${suffix}`} title="Home" aria-current={isHome ? 'page' : undefined} className={inlineNavLinkClass(isHome)}>
+        <Home className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+      </Link>
+      <Link
+        href={`/robot${suffix}`}
+        title="Operations"
+        aria-current={isOperations ? 'page' : undefined}
+        className={inlineNavLinkClass(isOperations)}
+      >
+        <Zap className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+      </Link>
+    </>
+  );
+}
+
+/** Fallback shown only for the first paint, before searchParams resolves. */
+function HeaderNavLinksFallback({ isHome, isOperations }: { isHome: boolean; isOperations: boolean }) {
+  return (
+    <>
+      <Link href="/" title="Home" aria-current={isHome ? 'page' : undefined} className={inlineNavLinkClass(isHome)}>
+        <Home className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+      </Link>
+      <Link href="/robot" title="Operations" aria-current={isOperations ? 'page' : undefined} className={inlineNavLinkClass(isOperations)}>
+        <Zap className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+      </Link>
+    </>
+  );
+}
+
+/**
+ * Compact Home / Operations icon switcher, rendered inline in the header
+ * next to the brand name (matches a nav-rail app feel rather than a
+ * separate bar). Active page gets a teal rounded background; inactive
+ * pages show just the bare white icon.
+ */
+function HeaderNav() {
+  const pathname = usePathname();
+  const isHome = pathname === '/';
+  const isOperations = pathname?.startsWith('/robot') ?? false;
+  return (
+    <div className="flex items-center gap-1.5 rounded-xl bg-teal-950 p-1">
+      <Suspense fallback={<HeaderNavLinksFallback isHome={isHome} isOperations={isOperations} />}>
+        <HeaderNavLinks isHome={isHome} isOperations={isOperations} />
+      </Suspense>
+    </div>
+  );
+}
+
 export function Header({
   authState,
   accounts,
@@ -93,7 +158,7 @@ export function Header({
   const isAuthenticating = authState === 'authenticating';
 
   return (
-    <header className="fixed top-10 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 border-b bg-background/80 backdrop-blur-sm">
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 border-b bg-background/80 backdrop-blur-sm">
       <div className="flex items-center gap-3">
         {!logoSrc || logoError ? (
           <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
@@ -104,15 +169,16 @@ export function Header({
           <img
             src={logoSrc}
             alt={localize('App Logo')}
-            className="h-8 w-auto object-contain"
+            className="h-10 w-auto object-contain"
             onError={() => setLogoError(true)}
           />
         )}
         {shouldShowName && (
-          <h1 className="text-lg font-semibold text-foreground hidden sm:block">
+          <h1 className={`${brandDisplay.className} text-xl font-semibold tracking-wide text-foreground hidden sm:block`}>
             {resolvedName}
           </h1>
         )}
+        <HeaderNav />
       </div>
       <div className="flex items-center gap-3">
         {actions}
