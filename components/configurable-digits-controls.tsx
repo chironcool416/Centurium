@@ -429,6 +429,7 @@ export function ConfigurableDigitsControls(props: ConfigurableDigitsControlsProp
           digitStats={digitStats}
           selectedDigit={selectedDigit}
           onDigitSelect={onDigitSelect}
+          lastDigit={lastDigit}
         />
       ),
       // Compact grid of 0–9 selectable <Button>s, each with its percentage.
