@@ -18,6 +18,9 @@ export interface BotLogEntry {
   id: number;
   time: number;
   digit: number | null;
+  /** Full exit price the contract settled at (e.g. 987.07), shown in the
+   *  log alongside the win/loss result. */
+  exitSpot: number | null;
   won: boolean;
   stake: number;
   profit: number;
@@ -159,8 +162,9 @@ export function useAutoBot({
 
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
-    const exitDigit = typeof pos.exit_spot === 'number' ? getLastDigit(pos.exit_spot, pipSize) : null;
-    pushLog({ digit: exitDigit, won, stake: stakeAmountRef.current, profit });
+    const exitSpot = typeof pos.exit_spot === 'number' ? pos.exit_spot : null;
+    const exitDigit = exitSpot !== null ? getLastDigit(exitSpot, pipSize) : null;
+    pushLog({ digit: exitDigit, exitSpot, won, stake: stakeAmountRef.current, profit });
     pendingContractIdRef.current = null;
 
     setPnl((prevPnl) => {
