@@ -182,13 +182,13 @@ function DigitFrequencyRow({
                 />
               </>
             )}
-            <span className="text-base font-semibold">{digit}</span>
+            <span className="text-lg font-bold text-foreground">{digit}</span>
             <span
               className={cn(
-                'text-[11px] font-mono',
-                isHighest && 'text-emerald-500 font-semibold',
-                isLowest && 'text-rose-500 font-semibold',
-                !isHighest && !isLowest && 'text-muted-foreground'
+                'text-xs font-mono font-bold',
+                isHighest && 'text-emerald-400',
+                isLowest && 'text-rose-400',
+                !isHighest && !isLowest && 'text-foreground/80'
               )}
             >
               {pct.toFixed(1)}%
@@ -206,26 +206,31 @@ function DigitHistogram({ title, stats }: { title: string; stats: DigitStats }) 
   const lowest = Math.min(...stats.percentages);
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-xs text-muted-foreground">{title}</span>
+      <span className="text-xs font-semibold text-foreground/90">{title}</span>
       <div className="flex items-end gap-1 h-28">
         {stats.percentages.map((pct, digit) => {
           const isHighest = stats.totalTicks > 0 && pct === highest;
           const isLowest = stats.totalTicks > 0 && pct === lowest;
           return (
             <div key={digit} className="flex-1 flex flex-col items-center gap-1">
-              <span className="text-[9px] text-muted-foreground">
+              <span
+                className={cn(
+                  'text-[10px] font-bold',
+                  isHighest ? 'text-emerald-400' : isLowest ? 'text-rose-400' : 'text-foreground/80'
+                )}
+              >
                 {stats.totalTicks > 0 ? `${Math.round(pct)}%` : ''}
               </span>
               <div className="w-full h-20 flex items-end">
                 <div
                   className={cn(
                     'w-full rounded-sm',
-                    isHighest ? 'bg-emerald-500' : isLowest ? 'bg-rose-500/70' : 'bg-muted-foreground/30'
+                    isHighest ? 'bg-emerald-500' : isLowest ? 'bg-rose-500/70' : 'bg-muted-foreground/50'
                   )}
                   style={{ height: `${Math.max((pct / maxPct) * 100, 3)}%` }}
                 />
               </div>
-              <span className="text-[9px] text-muted-foreground">{digit}</span>
+              <span className="text-[10px] font-semibold text-foreground/80">{digit}</span>
             </div>
           );
         })}
@@ -238,7 +243,7 @@ function TickSparkline({ prices }: { prices: number[] }) {
   const points = prices.slice(-24);
   if (points.length < 2) {
     return (
-      <div className="h-24 flex items-center justify-center text-xs text-muted-foreground">
+      <div className="h-24 flex items-center justify-center text-xs font-semibold text-foreground/90">
         <Localize i18n_default_text="Waiting for enough ticks…" />
       </div>
     );
@@ -500,7 +505,7 @@ export function TradeRobotView({
       {/* Left: Robot settings — sticky with its own scroll area on desktop
           so it can be scrolled independently of the page. */}
       <Card
-        className={`panel-glow bg-card/30 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
+        className={`panel-glow bg-card/60 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
         style={settingsPanel.style}
         onMouseEnter={settingsPanel.onMouseEnter}
         onMouseLeave={settingsPanel.onMouseLeave}
@@ -512,7 +517,7 @@ export function TradeRobotView({
           <CardTitle className="text-base">
             <Localize i18n_default_text="Robot settings" />
           </CardTitle>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs font-semibold text-foreground/90">
             {isConnected ? (
               balanceLabel ? (
                 balanceLabel
@@ -524,11 +529,11 @@ export function TradeRobotView({
             )}
           </p>
           <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
-            <span className={cn('text-xs font-medium', bot.running ? 'text-emerald-500' : 'text-muted-foreground')}>
+            <span className={cn('text-xs font-bold', bot.running ? 'text-emerald-400' : 'text-foreground/85')}>
               {getBotStatusLabel(bot.phase, localize)}
             </span>
             <div className="flex items-center gap-1.5">
-              <span className={cn('text-xs font-mono tabular-nums', bot.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+              <span className={cn('text-sm font-mono font-bold tabular-nums', bot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
                 {bot.pnl >= 0 ? '+' : ''}
                 {bot.pnl.toFixed(2)}
               </span>
@@ -546,7 +551,7 @@ export function TradeRobotView({
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
           <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">
+            <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Market" />
             </Label>
             <SymbolSelector
@@ -557,7 +562,7 @@ export function TradeRobotView({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">
+            <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trade Type" />
             </Label>
             <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
@@ -575,7 +580,7 @@ export function TradeRobotView({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">
+            <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trade Function" />
             </Label>
             <ToggleGroup
@@ -590,7 +595,7 @@ export function TradeRobotView({
                 <ToggleGroupItem
                   key={opt.value}
                   value={opt.value}
-                  className="flex-1 rounded-full text-xs font-medium text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+                  className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
                 >
                   {opt.label}
                 </ToggleGroupItem>
@@ -600,7 +605,7 @@ export function TradeRobotView({
 
           {tradeType !== 'even-odd' && (
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Prediction" />
               </Label>
               <Select
@@ -623,7 +628,7 @@ export function TradeRobotView({
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Duration" />
               </Label>
               <Input
@@ -639,7 +644,7 @@ export function TradeRobotView({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Multiplier" />
               </Label>
               <Input value={multiplier} onChange={(e) => setMultiplier(e.target.value)} />
@@ -648,7 +653,7 @@ export function TradeRobotView({
 
           <div className="space-y-1.5">
             <Label
-              className="text-xs text-muted-foreground"
+              className="text-xs font-semibold text-foreground/90"
               title={localize(
                 'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
               )}
@@ -663,20 +668,20 @@ export function TradeRobotView({
 
           <div className="border-t border-border pt-2 grid grid-cols-3 gap-2">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Initial" />
               </Label>
               <Input value={initialAmount} onChange={(e) => setInitialAmount(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Target profit" />
               </Label>
               <Input value={targetProfit} onChange={(e) => setTargetProfit(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label
-                className="text-xs text-muted-foreground"
+                className="text-xs font-semibold text-foreground/90"
                 title={localize('Stop after this many losses in a row')}
               >
                 <Localize i18n_default_text="Stop loss" />
@@ -721,7 +726,7 @@ export function TradeRobotView({
 
       {/* Center: analysis */}
       <Card
-        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${analysisPanel.className}`}
+        className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${analysisPanel.className}`}
         style={analysisPanel.style}
         onMouseEnter={analysisPanel.onMouseEnter}
         onMouseLeave={analysisPanel.onMouseLeave}
@@ -743,10 +748,10 @@ export function TradeRobotView({
                 key={key}
                 onClick={() => setActiveTab(key)}
                 className={cn(
-                  'pb-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+                  'pb-2.5 text-sm font-bold border-b-2 -mb-px transition-colors',
                   activeTab === key
                     ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                    : 'border-transparent text-foreground/70 hover:text-foreground'
                 )}
               >
                 {label}
@@ -775,7 +780,7 @@ export function TradeRobotView({
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {recentDigits.length === 0 && (
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs font-semibold text-foreground/90">
                       <Localize i18n_default_text="Waiting for ticks…" />
                     </span>
                   )}
@@ -785,10 +790,10 @@ export function TradeRobotView({
                       <span
                         key={i}
                         className={cn(
-                          'w-7 h-7 flex items-center justify-center rounded-md text-xs font-semibold',
+                          'w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold',
                           isLast
                             ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted text-muted-foreground'
+                            : 'bg-muted text-foreground/85'
                         )}
                       >
                         {d}
@@ -856,18 +861,18 @@ export function TradeRobotView({
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
                       {localize('Real')}
                     </span>
-                    <span className="text-muted-foreground">
+                    <span className="text-foreground/80 font-medium">
                       {new Date(entry.time).toLocaleTimeString()}
                     </span>
                     {entry.exitSpot !== null && (
-                      <span className="tabular-nums font-mono">{entry.exitSpot.toFixed(pipSize)}</span>
+                      <span className="tabular-nums font-mono font-semibold text-foreground">{entry.exitSpot.toFixed(pipSize)}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={entry.won ? 'text-emerald-500 font-medium' : 'text-rose-500 font-medium'}>
+                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
                       {entry.won ? localize('Win') : localize('Loss')}
                     </span>
-                    <span className={cn('tabular-nums', entry.profit >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
                       {entry.profit >= 0 ? '+' : ''}
                       {entry.profit.toFixed(2)}
                     </span>
@@ -881,7 +886,7 @@ export function TradeRobotView({
 
       {/* Right: Manual mode */}
       <Card
-        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${manualPanel.className}`}
+        className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${manualPanel.className}`}
         style={manualPanel.style}
         onMouseEnter={manualPanel.onMouseEnter}
         onMouseLeave={manualPanel.onMouseLeave}
@@ -893,7 +898,7 @@ export function TradeRobotView({
           <CardTitle className="text-base">
             <Localize i18n_default_text="Manual mode" />
           </CardTitle>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs font-semibold text-foreground/90">
             {activeSymbol?.underlying_symbol_name ?? localize('Select a market')}
           </p>
         </CardHeader>
