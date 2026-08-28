@@ -508,7 +508,7 @@ export function TradeRobotView({
     <div className="w-full max-w-[1600px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_300px] gap-4">
       {/* Left: Robot settings */}
       <Card
-        className={`panel-glow h-fit ${settingsPanel.className}`}
+        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${settingsPanel.className}`}
         style={settingsPanel.style}
         onMouseEnter={settingsPanel.onMouseEnter}
         onMouseLeave={settingsPanel.onMouseLeave}
@@ -738,7 +738,7 @@ export function TradeRobotView({
 
       {/* Center: analysis */}
       <Card
-        className={`panel-glow h-fit ${analysisPanel.className}`}
+        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${analysisPanel.className}`}
         style={analysisPanel.style}
         onMouseEnter={analysisPanel.onMouseEnter}
         onMouseLeave={analysisPanel.onMouseLeave}
@@ -896,7 +896,7 @@ export function TradeRobotView({
 
       {/* Right: Manual mode */}
       <Card
-        className={`panel-glow h-fit ${manualPanel.className}`}
+        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${manualPanel.className}`}
         style={manualPanel.style}
         onMouseEnter={manualPanel.onMouseEnter}
         onMouseLeave={manualPanel.onMouseLeave}
