@@ -551,8 +551,8 @@ export function TradeRobotView({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <fieldset disabled={bot.running} className="space-y-4 border-0 p-0 m-0 min-w-0">
+        <CardContent className="space-y-3">
+          <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
               <Localize i18n_default_text="Market" />
@@ -564,7 +564,7 @@ export function TradeRobotView({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">
                 <Localize i18n_default_text="Trade Type" />
@@ -608,7 +608,7 @@ export function TradeRobotView({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">
                 <Localize i18n_default_text="Duration" />
@@ -634,19 +634,21 @@ export function TradeRobotView({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">
-              <Localize i18n_default_text="Start martingale after N losses" />
+            <Label
+              className="text-xs text-muted-foreground"
+              title={localize(
+                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
+              )}
+            >
+              <Localize i18n_default_text="Martingale after N losses" />
             </Label>
             <Input
               value={martingaleAfterLosses}
               onChange={(e) => setMartingaleAfterLosses(e.target.value)}
             />
-            <p className="text-[11px] text-muted-foreground">
-              <Localize i18n_default_text="Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss." />
-            </p>
           </div>
 
-          <div className="border-t border-border pt-3 grid grid-cols-3 gap-2">
+          <div className="border-t border-border pt-2 grid grid-cols-3 gap-2">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">
                 <Localize i18n_default_text="Initial" />
@@ -663,30 +665,32 @@ export function TradeRobotView({
               <Label className="text-xs text-muted-foreground">
                 <Localize i18n_default_text="Stop loss" />
               </Label>
-              <div className="grid grid-cols-1 gap-1 rounded-md bg-muted/40 p-0.5">
+              <div className="grid grid-cols-2 gap-1 rounded-md bg-muted/40 p-0.5">
                 <button
                   type="button"
                   onClick={() => setStopLossMode('losses')}
+                  title={localize('Stop after this many losses in a row')}
                   className={cn(
-                    'rounded px-1.5 py-1 text-left text-[10px] font-medium leading-tight transition-colors',
+                    'rounded px-1 py-1 text-center text-[10px] font-medium leading-tight transition-colors',
                     stopLossMode === 'losses'
                       ? 'bg-primary/15 text-primary'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  <Localize i18n_default_text="Losses in a row" />
+                  <Localize i18n_default_text="Streak" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setStopLossMode('amount')}
+                  title={localize('Stop after losing this many times the initial stake')}
                   className={cn(
-                    'rounded px-1.5 py-1 text-left text-[10px] font-medium leading-tight transition-colors',
+                    'rounded px-1 py-1 text-center text-[10px] font-medium leading-tight transition-colors',
                     stopLossMode === 'amount'
                       ? 'bg-primary/15 text-primary'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  <Localize i18n_default_text="Stop loss ×" />
+                  <Localize i18n_default_text="× Stake" />
                 </button>
               </div>
               {stopLossMode === 'losses' ? (
@@ -702,11 +706,6 @@ export function TradeRobotView({
               )}
             </div>
           </div>
-          {stopLossMode === 'losses' && (
-            <p className="text-[11px] text-muted-foreground">
-              <Localize i18n_default_text="Stops the robot the instant this many losses happen in a row, regardless of overall profit/loss." />
-            </p>
-          )}
           </fieldset>
 
           <Button
