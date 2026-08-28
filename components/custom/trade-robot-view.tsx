@@ -19,6 +19,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SymbolSelector } from '@/components/custom/symbol-selector';
 import { TradeControls, getContractModeOptions } from '@/components/trade-controls';
 import { PositionsTable } from '@/components/custom/positions-table';
+import { VictoryDialog } from '@/components/custom/victory-dialog';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
@@ -468,6 +469,16 @@ export function TradeRobotView({
     openPositions,
   });
 
+  // Celebration modal — opens the moment the bot's phase flips to
+  // `stopped-target`, independent of that phase so the user can dismiss it
+  // (and start a new run) without the phase itself changing.
+  const [victoryOpen, setVictoryOpen] = useState(false);
+  useEffect(() => {
+    if (bot.phase === 'stopped-target') {
+      setVictoryOpen(true);
+    }
+  }, [bot.phase]);
+
   const handleStart = () => {
     if (bot.running) {
       bot.stop();
@@ -504,6 +515,12 @@ export function TradeRobotView({
   };
 
   return (
+    <>
+    <VictoryDialog
+      open={victoryOpen}
+      onOpenChange={setVictoryOpen}
+      onContinue={() => setVictoryOpen(false)}
+    />
     <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[420px_1fr_300px] gap-4">
       {/* Left: Robot settings — sticky with its own scroll area on desktop
           so it can be scrolled independently of the page. */}
@@ -936,5 +953,6 @@ export function TradeRobotView({
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }
