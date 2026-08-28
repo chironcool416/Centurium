@@ -157,13 +157,13 @@ function DigitFrequencyRow({
             key={digit}
             onClick={() => onSelect(digit)}
             className={cn(
-              'relative flex flex-col items-center gap-1 rounded-md border py-2 transition-colors',
+              'relative flex flex-col items-center gap-1 rounded-md border py-2 transition-all duration-200',
               isSelected
                 ? 'border-destructive ring-1 ring-destructive'
                 : isHighest
                   ? 'border-emerald-500/60'
                   : 'border-border',
-              'bg-muted/30 hover:bg-muted/60'
+              'bg-muted/30 hover:bg-muted/60 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]'
             )}
           >
             {isCurrent && (
@@ -212,7 +212,10 @@ function DigitHistogram({ title, stats }: { title: string; stats: DigitStats }) 
           const isHighest = stats.totalTicks > 0 && pct === highest;
           const isLowest = stats.totalTicks > 0 && pct === lowest;
           return (
-            <div key={digit} className="flex-1 flex flex-col items-center gap-1">
+            <div
+              key={digit}
+              className="flex-1 flex flex-col items-center gap-1 rounded-md py-1 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]"
+            >
               <span
                 className={cn(
                   'text-[10px] font-bold',
@@ -550,7 +553,7 @@ export function TradeRobotView({
         </CardHeader>
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
           <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Market" />
             </Label>
@@ -561,7 +564,7 @@ export function TradeRobotView({
             />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trade Type" />
             </Label>
@@ -579,7 +582,7 @@ export function TradeRobotView({
             </Select>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trade Function" />
             </Label>
@@ -604,7 +607,7 @@ export function TradeRobotView({
           </div>
 
           {tradeType !== 'even-odd' && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Prediction" />
               </Label>
@@ -627,7 +630,7 @@ export function TradeRobotView({
           )}
 
           <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Duration" />
               </Label>
@@ -643,7 +646,7 @@ export function TradeRobotView({
                 labelRight={localize('Ticks')}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Multiplier" />
               </Label>
@@ -651,7 +654,7 @@ export function TradeRobotView({
             </div>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label
               className="text-xs font-semibold text-foreground/90"
               title={localize(
@@ -667,19 +670,19 @@ export function TradeRobotView({
           </div>
 
           <div className="border-t border-border pt-2 grid grid-cols-3 gap-2">
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Initial" />
               </Label>
               <Input value={initialAmount} onChange={(e) => setInitialAmount(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Target profit" />
               </Label>
               <Input value={targetProfit} onChange={(e) => setTargetProfit(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize('Stop after this many losses in a row')}
@@ -790,7 +793,7 @@ export function TradeRobotView({
                       <span
                         key={i}
                         className={cn(
-                          'w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold',
+                          'w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]',
                           isLast
                             ? 'bg-primary text-primary-foreground'
                             : 'bg-muted text-foreground/85'
