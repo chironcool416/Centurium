@@ -500,7 +500,7 @@ export function TradeRobotView({
       {/* Left: Robot settings — sticky with its own scroll area on desktop
           so it can be scrolled independently of the page. */}
       <Card
-        className={`panel-glow bg-card/30 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] ${settingsPanel.className}`}
+        className={`panel-glow bg-card/30 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] lg:overflow-hidden ${settingsPanel.className}`}
         style={settingsPanel.style}
         onMouseEnter={settingsPanel.onMouseEnter}
         onMouseLeave={settingsPanel.onMouseLeave}
@@ -543,7 +543,7 @@ export function TradeRobotView({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3 lg:overflow-y-auto lg:min-h-0">
+        <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
           <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
