@@ -79,6 +79,8 @@ export interface TradeRobotViewProps {
   activeSymbol: ActiveSymbol | null;
   selectSymbol: (symbol: string) => void;
   currentTick: Tick | null;
+  /** Full tick-price history (includes pre-fetched history, not just live ticks). */
+  prices: number[];
   pipSize: number;
 
   tradeType: TradeType;
@@ -264,6 +266,7 @@ export function TradeRobotView({
   activeSymbol,
   selectSymbol,
   currentTick,
+  prices,
   pipSize,
   tradeType,
   setTradeType,
@@ -295,7 +298,10 @@ export function TradeRobotView({
   const digitContractLabels = getDigitContractLabels(localize);
 
   const [activeTab, setActiveTab] = useState<Tab>('digits');
-  const [priceHistory, setPriceHistory] = useState<number[]>([]);
+  // `prices` already contains the pre-fetched history merged with live ticks
+  // (see useTicks), so derive from it directly instead of keeping a separate
+  // buffer that would start empty and duplicate/lag the real data.
+  const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
 
   // Local, informational bot-settings state. There is no automated execution
   // engine wired up yet — starting the robot only shows a notice below.
@@ -307,20 +313,6 @@ export function TradeRobotView({
   const [initialAmount, setInitialAmount] = useState('1');
   const [targetProfit, setTargetProfit] = useState('5');
   const [stopLossMultiplier, setStopLossMultiplier] = useState('6');
-
-  // Reset the rolling tick buffer whenever the active market changes.
-  useEffect(() => {
-    setPriceHistory([]);
-  }, [activeSymbol?.underlying_symbol]);
-
-  useEffect(() => {
-    if (currentTick) {
-      setPriceHistory((prev) => {
-        const next = [...prev, currentTick.quote];
-        return next.length > HISTORY_WINDOW ? next.slice(-HISTORY_WINDOW) : next;
-      });
-    }
-  }, [currentTick]);
 
   const overallStats = useMemo(
     () => computeDigitStats(priceHistory, pipSize),
