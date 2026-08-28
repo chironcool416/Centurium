@@ -55,3 +55,32 @@
     animation: none;
   }
 }
+
+/* Intro splash: the emblem blinks/breathes with a glowing blue halo for a
+   few cycles before the overlay fades out to reveal the homepage. Opacity
+   and the glow's spread/intensity move together so the "blink" reads as the
+   light itself pulsing, not just a fade. */
+@keyframes intro-emblem-flicker {
+  0%,
+  100% {
+    opacity: 0.35;
+    filter: drop-shadow(0 0 6px rgb(59 130 246 / 0.25))
+      drop-shadow(0 0 16px rgb(59 130 246 / 0.18));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 22px rgb(96 165 250 / 0.85))
+      drop-shadow(0 0 60px rgb(59 130 246 / 0.55))
+      drop-shadow(0 0 110px rgb(59 130 246 / 0.3));
+  }
+}
+.intro-emblem {
+  animation: intro-emblem-flicker 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .intro-emblem {
+    animation: none;
+    opacity: 1;
+    filter: drop-shadow(0 0 24px rgb(59 130 246 / 0.5));
+  }
+}
