@@ -59,6 +59,7 @@ export default function RobotPage() {
           activeSymbol={trading.activeSymbol}
           selectSymbol={trading.selectSymbol}
           currentTick={trading.currentTick}
+          prices={trading.prices}
           pipSize={trading.pipSize}
           tradeType={trading.tradeType}
           setTradeType={trading.setTradeType}
