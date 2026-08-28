@@ -875,7 +875,9 @@ export function TradeRobotView({
                     <span className="text-muted-foreground">
                       {new Date(entry.time).toLocaleTimeString()}
                     </span>
-                    {entry.digit !== null && <span className="tabular-nums">{localize('digit')} {entry.digit}</span>}
+                    {entry.exitSpot !== null && (
+                      <span className="tabular-nums font-mono">{entry.exitSpot.toFixed(pipSize)}</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={entry.won ? 'text-emerald-500 font-medium' : 'text-rose-500 font-medium'}>
