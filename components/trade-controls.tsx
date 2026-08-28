@@ -39,7 +39,7 @@ interface TradeControlsProps {
   isAuthenticated?: boolean;
 }
 
-function getContractModeOptions(
+export function getContractModeOptions(
   localize: (text: string) => string
 ): Record<TradeType, { value: ContractMode; label: string }[]> {
   return {
