@@ -17,17 +17,19 @@ const REDUCED_MOTION_DURATION_MS = 2_000;
 
 export function IntroSplash({ onFinished }: { onFinished: () => void }) {
   const [fadingOut, setFadingOut] = useState(false);
+  const [holdDuration, setHoldDuration] = useState(FLICKER_DURATION_MS);
 
   useEffect(() => {
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const holdDuration = prefersReducedMotion
+    const duration = prefersReducedMotion
       ? REDUCED_MOTION_DURATION_MS
       : FLICKER_DURATION_MS;
+    setHoldDuration(duration);
 
-    const fadeTimer = setTimeout(() => setFadingOut(true), holdDuration);
-    const doneTimer = setTimeout(() => onFinished(), holdDuration + FADE_OUT_MS);
+    const fadeTimer = setTimeout(() => setFadingOut(true), duration);
+    const doneTimer = setTimeout(() => onFinished(), duration + FADE_OUT_MS);
 
     return () => {
       clearTimeout(fadeTimer);
@@ -46,16 +48,26 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
         transitionDuration: `${FADE_OUT_MS}ms`,
       }}
     >
-      <div className="absolute inset-0 bg-background/80" />
+      {/* Near-black scrim so the background photo all but disappears,
+          letting the emblem's glow read as the only light source. */}
+      <div className="absolute inset-0 bg-black/92" />
       <div className="intro-emblem-glow absolute h-[70vmin] w-[70vmin] rounded-full" />
-      <Image
-        src="/centurium-emblem.png"
-        alt="Centurium Capital"
-        width={1091}
-        height={1213}
-        priority
-        className="intro-emblem relative h-auto w-72 select-none sm:w-96 md:w-[28rem] lg:w-[32rem]"
-      />
+      <div className="relative flex flex-col items-center gap-8">
+        <Image
+          src="/centurium-emblem.png"
+          alt="Centurium Capital"
+          width={1091}
+          height={1213}
+          priority
+          className="intro-emblem h-auto w-72 select-none sm:w-96 md:w-[28rem] lg:w-[32rem]"
+        />
+        <div className="intro-loading-track h-1.5 w-56 rounded-full sm:w-72">
+          <div
+            className="intro-loading-fill rounded-full"
+            style={{ animationDuration: `${holdDuration}ms` }}
+          />
+        </div>
+      </div>
     </div>
   );
 }
