@@ -28,6 +28,7 @@ interface UseDigitsTradingReturn {
   activeSymbol: ActiveSymbol | null;
   selectSymbol: (symbol: string) => void;
   currentTick: Tick | null;
+  prices: number[];
   lastDigit: number | null;
   digitStats: DigitStats;
   tradeType: TradeType;
@@ -168,6 +169,7 @@ export function useDigitsTrading({ ws, isConnected, isExhausted, isAuthenticated
     activeSymbol,
     selectSymbol,
     currentTick,
+    prices,
     lastDigit,
     digitStats,
     tradeType,
