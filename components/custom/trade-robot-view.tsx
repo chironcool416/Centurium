@@ -20,6 +20,7 @@ import { SymbolSelector } from '@/components/custom/symbol-selector';
 import { TradeControls, getContractModeOptions } from '@/components/trade-controls';
 import { PositionsTable } from '@/components/custom/positions-table';
 import { VictoryDialog } from '@/components/custom/victory-dialog';
+import { DefeatDialog } from '@/components/custom/defeat-dialog';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
@@ -479,6 +480,14 @@ export function TradeRobotView({
     }
   }, [bot.phase]);
 
+  // Same pattern as the victory modal above, but for the stop-loss phase.
+  const [defeatOpen, setDefeatOpen] = useState(false);
+  useEffect(() => {
+    if (bot.phase === 'stopped-loss') {
+      setDefeatOpen(true);
+    }
+  }, [bot.phase]);
+
   const handleStart = () => {
     if (bot.running) {
       bot.stop();
@@ -520,6 +529,11 @@ export function TradeRobotView({
       open={victoryOpen}
       onOpenChange={setVictoryOpen}
       onContinue={() => setVictoryOpen(false)}
+    />
+    <DefeatDialog
+      open={defeatOpen}
+      onOpenChange={setDefeatOpen}
+      onContinue={() => setDefeatOpen(false)}
     />
     <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[420px_1fr_300px] gap-4">
       {/* Left: Robot settings — sticky with its own scroll area on desktop
