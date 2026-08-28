@@ -1,13 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Tick, ProposalInfo, BuyResult } from '@deriv/core';
-import type { ContractMode, OpenPosition } from '@/lib/types';
+import type { ProposalInfo, BuyResult } from '@deriv/core';
+import type { OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
 
 export type BotPhase =
   | 'idle'
-  | 'virtual'
   | 'awaiting-proposal'
   | 'awaiting-buy'
   | 'awaiting-settlement'
@@ -18,7 +17,6 @@ export type BotPhase =
 export interface BotLogEntry {
   id: number;
   time: number;
-  kind: 'virtual' | 'real';
   digit: number | null;
   won: boolean;
   stake: number;
@@ -28,42 +26,16 @@ export interface BotLogEntry {
 export interface BotConfig {
   initialStake: number;
   multiplier: number;
-  virtualLossesNeeded: number;
-  startWithVirtual: boolean;
+  /** Number of consecutive losses to absorb at the initial stake before the
+   *  martingale multiplier starts being applied. 0 = multiply from the very
+   *  first loss. */
+  martingaleStartAfter: number;
   targetProfit: number; // Infinity = no target
   stopLossAmount: number; // positive number, Infinity = no stop-loss
 }
 
-/** Evaluates a Deriv digit contract's win condition against a settled digit. */
-function evaluateDigitOutcome(
-  contractMode: ContractMode,
-  selectedDigit: number,
-  digit: number
-): boolean {
-  switch (contractMode) {
-    case 'DIGITMATCH':
-      return digit === selectedDigit;
-    case 'DIGITDIFF':
-      return digit !== selectedDigit;
-    case 'DIGITOVER':
-      return digit > selectedDigit;
-    case 'DIGITUNDER':
-      return digit < selectedDigit;
-    case 'DIGITEVEN':
-      return digit % 2 === 0;
-    case 'DIGITODD':
-      return digit % 2 === 1;
-    default:
-      return false;
-  }
-}
-
 interface UseAutoBotParams {
-  currentTick: Tick | null;
   pipSize: number;
-  contractMode: ContractMode;
-  selectedDigit: number;
-  duration: number;
   setStake: (value: string) => void;
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
@@ -77,10 +49,10 @@ interface UseAutoBotParams {
 /**
  * Runs a martingale-style digit trading loop entirely client-side, reusing
  * the same proposal/buy machinery as Manual mode:
- *  - optionally waits for N consecutive *virtual* (simulated, no real stake)
- *    losses of the selected condition before committing real money
- *  - on each real loss, multiplies the stake by `multiplier`; resets to the
- *    initial stake on a win
+ *  - places real trades from the start
+ *  - absorbs the first `martingaleStartAfter` consecutive losses at the
+ *    initial stake, then multiplies the stake by `multiplier` on each loss
+ *    beyond that; any win resets both the stake and the loss streak
  *  - stops automatically once cumulative profit reaches `targetProfit` or
  *    cumulative loss reaches `stopLossAmount`
  *
@@ -88,11 +60,7 @@ interface UseAutoBotParams {
  * WebSocket stream (proposal_open_contract), not by polling.
  */
 export function useAutoBot({
-  currentTick,
   pipSize,
-  contractMode,
-  selectedDigit,
-  duration,
   setStake,
   proposal,
   isProposalLoading,
@@ -110,14 +78,12 @@ export function useAutoBot({
   const cfgRef = useRef<BotConfig>({
     initialStake: 1,
     multiplier: 2,
-    virtualLossesNeeded: 0,
-    startWithVirtual: false,
+    martingaleStartAfter: 0,
     targetProfit: Infinity,
     stopLossAmount: Infinity,
   });
   const stakeAmountRef = useRef(1);
-  const virtualLossRef = useRef(0);
-  const virtualTickCountRef = useRef(0);
+  const consecutiveLossesRef = useRef(0);
   const pendingContractIdRef = useRef<number | null>(null);
   const logIdRef = useRef(0);
 
@@ -133,17 +99,12 @@ export function useAutoBot({
       cfgRef.current = { ...cfg, initialStake };
       stakeAmountRef.current = initialStake;
       setCurrentStake(initialStake);
-      virtualLossRef.current = 0;
-      virtualTickCountRef.current = 0;
+      consecutiveLossesRef.current = 0;
       pendingContractIdRef.current = null;
       setPnl(0);
       setLog([]);
-      if (cfg.startWithVirtual && cfg.virtualLossesNeeded > 0) {
-        setPhase('virtual');
-      } else {
-        setStake(String(initialStake));
-        setPhase('awaiting-proposal');
-      }
+      setStake(String(initialStake));
+      setPhase('awaiting-proposal');
     },
     [setStake]
   );
@@ -153,28 +114,11 @@ export function useAutoBot({
     pendingContractIdRef.current = null;
   }, []);
 
-  // --- Virtual round: count ticks up to `duration`, then evaluate the same
-  // win condition a real contract would use, without placing a real trade.
-  useEffect(() => {
-    if (phase !== 'virtual' || !currentTick) return;
-    virtualTickCountRef.current += 1;
-    if (virtualTickCountRef.current < duration) return;
-    virtualTickCountRef.current = 0;
-
-    const digit = getLastDigit(currentTick.quote, pipSize);
-    const won = evaluateDigitOutcome(contractMode, selectedDigit, digit);
-    pushLog({ kind: 'virtual', digit, won, stake: 0, profit: 0 });
-
-    if (won) {
-      virtualLossRef.current = 0;
-      return;
-    }
-    virtualLossRef.current += 1;
-    if (virtualLossRef.current >= cfgRef.current.virtualLossesNeeded) {
-      setStake(String(stakeAmountRef.current));
-      setPhase('awaiting-proposal');
-    }
-  }, [currentTick, phase, duration, pipSize, contractMode, selectedDigit, setStake, pushLog]);
+  /** Zeroes the displayed cumulative profit/loss without affecting a run in
+   *  progress — lets the user start a fresh count for a new session. */
+  const resetPnl = useCallback(() => {
+    setPnl(0);
+  }, []);
 
   // --- Once a fresh proposal matching the stake we asked for is ready, buy.
   useEffect(() => {
@@ -208,7 +152,7 @@ export function useAutoBot({
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
     const exitDigit = typeof pos.exit_spot === 'number' ? getLastDigit(pos.exit_spot, pipSize) : null;
-    pushLog({ kind: 'real', digit: exitDigit, won, stake: stakeAmountRef.current, profit });
+    pushLog({ digit: exitDigit, won, stake: stakeAmountRef.current, profit });
     pendingContractIdRef.current = null;
 
     setPnl((prevPnl) => {
@@ -221,9 +165,18 @@ export function useAutoBot({
         setPhase('stopped-loss');
         return nextPnl;
       }
-      stakeAmountRef.current = won
-        ? cfgRef.current.initialStake
-        : Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100;
+
+      if (won) {
+        consecutiveLossesRef.current = 0;
+        stakeAmountRef.current = cfgRef.current.initialStake;
+      } else {
+        consecutiveLossesRef.current += 1;
+        stakeAmountRef.current =
+          consecutiveLossesRef.current > cfgRef.current.martingaleStartAfter
+            ? Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100
+            : cfgRef.current.initialStake;
+      }
+
       setCurrentStake(stakeAmountRef.current);
       setStake(String(stakeAmountRef.current));
       setPhase('awaiting-proposal');
@@ -231,5 +184,5 @@ export function useAutoBot({
     });
   }, [phase, openPositions, setStake, pipSize, pushLog]);
 
-  return { phase, running, pnl, log, currentStake, start, stop };
+  return { phase, running, pnl, log, currentStake, start, stop, resetPnl };
 }
