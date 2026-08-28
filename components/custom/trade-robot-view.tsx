@@ -112,6 +112,16 @@ export interface TradeRobotViewProps {
 
 const HISTORY_WINDOW = 100;
 const RECENT_DIGITS_SHOWN = 26;
+const ROBOT_SETTINGS_STORAGE_KEY = 'centurium:robot-settings';
+
+interface SavedRobotSettings {
+  multiplier: string;
+  martingaleAfterLosses: string;
+  initialAmount: string;
+  targetProfit: string;
+  stopLossMultiplier: string;
+  duration: number;
+}
 
 function DigitFrequencyRow({
   digitStats,
@@ -240,8 +250,6 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
   switch (phase) {
     case 'idle':
       return localize('Not running');
-    case 'virtual':
-      return localize('Watching (virtual)');
     case 'awaiting-proposal':
     case 'awaiting-buy':
       return localize('Placing trade…');
@@ -303,16 +311,46 @@ export function TradeRobotView({
   // buffer that would start empty and duplicate/lag the real data.
   const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
 
-  // Local, informational bot-settings state. There is no automated execution
-  // engine wired up yet — starting the robot only shows a notice below.
   const [multiplier, setMultiplier] = useState('2.5');
-  const [virtualLosses, setVirtualLosses] = useState('0');
-  const [startWithVirtual, setStartWithVirtual] = useState(true);
-  const [analyzeAmount, setAnalyzeAmount] = useState('100');
-  const [reanalyzeAfter, setReanalyzeAfter] = useState('2');
+  const [martingaleAfterLosses, setMartingaleAfterLosses] = useState('0');
   const [initialAmount, setInitialAmount] = useState('1');
   const [targetProfit, setTargetProfit] = useState('5');
   const [stopLossMultiplier, setStopLossMultiplier] = useState('6');
+
+  // Load any saved robot settings once on mount.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<SavedRobotSettings>;
+      if (typeof saved.multiplier === 'string') setMultiplier(saved.multiplier);
+      if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
+      if (typeof saved.initialAmount === 'string') setInitialAmount(saved.initialAmount);
+      if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
+      if (typeof saved.stopLossMultiplier === 'string') setStopLossMultiplier(saved.stopLossMultiplier);
+      if (typeof saved.duration === 'number') setDuration(saved.duration);
+    } catch {
+      // Ignore malformed/unavailable storage — fields just keep their defaults.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveSettings = () => {
+    try {
+      const payload: SavedRobotSettings = {
+        multiplier,
+        martingaleAfterLosses,
+        initialAmount,
+        targetProfit,
+        stopLossMultiplier,
+        duration,
+      };
+      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+      toast.success(localize('Settings saved'));
+    } catch {
+      toast.error(localize('Could not save settings on this device.'));
+    }
+  };
 
   const overallStats = useMemo(
     () => computeDigitStats(priceHistory, pipSize),
@@ -336,11 +374,7 @@ export function TradeRobotView({
   );
 
   const bot = useAutoBot({
-    currentTick,
     pipSize,
-    contractMode,
-    selectedDigit,
-    duration,
     setStake,
     proposal,
     isProposalLoading,
@@ -363,21 +397,20 @@ export function TradeRobotView({
       return;
     }
     const mult = parseFloat(multiplier) || 1;
-    const virtualLossesNeeded = Math.max(0, parseInt(virtualLosses, 10) || 0);
+    const martingaleStartAfter = Math.max(0, parseInt(martingaleAfterLosses, 10) || 0);
     const target = parseFloat(targetProfit);
     const stopLossMult = parseFloat(stopLossMultiplier);
     bot.start({
       initialStake: initial,
       multiplier: mult,
-      virtualLossesNeeded,
-      startWithVirtual,
+      martingaleStartAfter,
       targetProfit: target > 0 ? target : Infinity,
       stopLossAmount: stopLossMult > 0 ? initial * stopLossMult : Infinity,
     });
     toast.info(localize('Robot started'), {
       description:
-        startWithVirtual && virtualLossesNeeded > 0
-          ? localize('Watching for a signal before placing real trades…')
+        martingaleStartAfter > 0
+          ? localize('Trading at the initial stake until a loss streak triggers the martingale.')
           : localize('Placing trades using the settings on the left.'),
     });
   };
@@ -405,12 +438,20 @@ export function TradeRobotView({
             <span className={cn('text-xs font-medium', bot.running ? 'text-emerald-500' : 'text-muted-foreground')}>
               {getBotStatusLabel(bot.phase, localize)}
             </span>
-            {bot.running && (
+            <div className="flex items-center gap-1.5">
               <span className={cn('text-xs font-mono tabular-nums', bot.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
                 {bot.pnl >= 0 ? '+' : ''}
                 {bot.pnl.toFixed(2)}
               </span>
-            )}
+              <button
+                type="button"
+                onClick={bot.resetPnl}
+                title={localize('Reset profit/loss to 0')}
+                className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
+              >
+                <Localize i18n_default_text="Reset" />
+              </button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -495,49 +536,18 @@ export function TradeRobotView({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Virtual losses" />
-              </Label>
-              <Input value={virtualLosses} onChange={(e) => setVirtualLosses(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Start with virtual" />
-              </Label>
-              <Select
-                value={startWithVirtual ? 'yes' : 'no'}
-                onValueChange={(v) => setStartWithVirtual(v === 'yes')}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="yes">{localize('Yes')}</SelectItem>
-                  <SelectItem value="no">{localize('No')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              <Localize i18n_default_text="Start martingale after N losses" />
+            </Label>
+            <Input
+              value={martingaleAfterLosses}
+              onChange={(e) => setMartingaleAfterLosses(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              <Localize i18n_default_text="Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss." />
+            </p>
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Analyze amount" />
-              </Label>
-              <Input value={analyzeAmount} onChange={(e) => setAnalyzeAmount(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Reanalyze after losses" />
-              </Label>
-              <Input value={reanalyzeAfter} onChange={(e) => setReanalyzeAfter(e.target.value)} />
-            </div>
-          </div>
-          <p className="text-[11px] text-muted-foreground -mt-2">
-            <Localize i18n_default_text="These two aren't used by the robot yet — it keeps the same prediction throughout a run." />
-          </p>
 
           <div className="border-t border-border pt-3 grid grid-cols-3 gap-2">
             <div className="space-y-1.5">
@@ -560,6 +570,14 @@ export function TradeRobotView({
             </div>
           </div>
           </fieldset>
+
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={handleSaveSettings}
+          >
+            <Localize i18n_default_text="Save settings" />
+          </Button>
 
           <Button
             className="w-full"
@@ -705,13 +723,8 @@ export function TradeRobotView({
                   className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
                 >
                   <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase',
-                        entry.kind === 'virtual' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'
-                      )}
-                    >
-                      {entry.kind === 'virtual' ? localize('Virtual') : localize('Real')}
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
+                      {localize('Real')}
                     </span>
                     <span className="text-muted-foreground">
                       {new Date(entry.time).toLocaleTimeString()}
@@ -722,12 +735,10 @@ export function TradeRobotView({
                     <span className={entry.won ? 'text-emerald-500 font-medium' : 'text-rose-500 font-medium'}>
                       {entry.won ? localize('Win') : localize('Loss')}
                     </span>
-                    {entry.kind === 'real' && (
-                      <span className={cn('tabular-nums', entry.profit >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
-                        {entry.profit >= 0 ? '+' : ''}
-                        {entry.profit.toFixed(2)}
-                      </span>
-                    )}
+                    <span className={cn('tabular-nums', entry.profit >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                      {entry.profit >= 0 ? '+' : ''}
+                      {entry.profit.toFixed(2)}
+                    </span>
                   </div>
                 </div>
               ))}
