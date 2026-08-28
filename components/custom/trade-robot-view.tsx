@@ -297,6 +297,43 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
   }
 }
 
+type RobotPanelKey = 'settings' | 'analysis' | 'manual';
+
+/**
+ * Same premium hover micro-interaction used on the homepage's entry cards:
+ * the hovered panel lifts/scales up and its `.panel-glow` breathing glow
+ * gets a brighter overlay faded in on top (rather than swapping the
+ * keyframes, which would make the glow jump instead of smoothly
+ * intensifying). The other panels dim slightly while one is hovered.
+ */
+function useRobotPanelHover() {
+  const [hovered, setHovered] = useState<RobotPanelKey | null>(null);
+
+  function panelProps(key: RobotPanelKey) {
+    const isHovered = hovered === key;
+    const isDimmed = hovered !== null && hovered !== key;
+    return {
+      onMouseEnter: () => setHovered(key),
+      onMouseLeave: () =>
+        setHovered((current: RobotPanelKey | null) => (current === key ? null : current)),
+      onFocus: () => setHovered(key),
+      onBlur: () =>
+        setHovered((current: RobotPanelKey | null) => (current === key ? null : current)),
+      style: {
+        transform: isHovered ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
+        opacity: isDimmed ? 0.92 : 1,
+      },
+      className:
+        'relative transition-[transform,opacity] duration-300 ease-out will-change-transform',
+      overlayClassName:
+        'pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ease-out shadow-[0_14px_32px_-12px_rgba(0,0,0,0.35),0_0_0_1px_rgba(59,130,246,0.55),0_0_26px_4px_rgba(59,130,246,0.45),0_0_56px_14px_rgba(59,130,246,0.22)]' +
+        (isHovered ? ' opacity-100' : ' opacity-0'),
+    };
+  }
+
+  return panelProps;
+}
+
 export function TradeRobotView({
   isConnected,
   isAuthenticated,
@@ -335,6 +372,11 @@ export function TradeRobotView({
   const { localize } = useAppTranslations();
   const digitTradeTypeOptions = getDigitTradeTypeOptions(localize);
   const digitContractLabels = getDigitContractLabels(localize);
+
+  const getPanelProps = useRobotPanelHover();
+  const settingsPanel = getPanelProps('settings');
+  const analysisPanel = getPanelProps('analysis');
+  const manualPanel = getPanelProps('manual');
 
   const [activeTab, setActiveTab] = useState<Tab>('digits');
   // `prices` already contains the pre-fetched history merged with live ticks
@@ -465,7 +507,15 @@ export function TradeRobotView({
   return (
     <div className="w-full max-w-[1600px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_300px] gap-4">
       {/* Left: Robot settings */}
-      <Card className="h-fit">
+      <Card
+        className={`panel-glow h-fit ${settingsPanel.className}`}
+        style={settingsPanel.style}
+        onMouseEnter={settingsPanel.onMouseEnter}
+        onMouseLeave={settingsPanel.onMouseLeave}
+        onFocus={settingsPanel.onFocus}
+        onBlur={settingsPanel.onBlur}
+      >
+        <div aria-hidden className={settingsPanel.overlayClassName} />
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
             <Localize i18n_default_text="Robot settings" />
@@ -687,7 +737,15 @@ export function TradeRobotView({
       </Card>
 
       {/* Center: analysis */}
-      <Card className="h-fit">
+      <Card
+        className={`panel-glow h-fit ${analysisPanel.className}`}
+        style={analysisPanel.style}
+        onMouseEnter={analysisPanel.onMouseEnter}
+        onMouseLeave={analysisPanel.onMouseLeave}
+        onFocus={analysisPanel.onFocus}
+        onBlur={analysisPanel.onBlur}
+      >
+        <div aria-hidden className={analysisPanel.overlayClassName} />
         <CardHeader className="pb-0">
           <div className="flex items-center gap-5 border-b border-border">
             {(
@@ -837,7 +895,15 @@ export function TradeRobotView({
       </Card>
 
       {/* Right: Manual mode */}
-      <Card className="h-fit">
+      <Card
+        className={`panel-glow h-fit ${manualPanel.className}`}
+        style={manualPanel.style}
+        onMouseEnter={manualPanel.onMouseEnter}
+        onMouseLeave={manualPanel.onMouseLeave}
+        onFocus={manualPanel.onFocus}
+        onBlur={manualPanel.onBlur}
+      >
+        <div aria-hidden className={manualPanel.overlayClassName} />
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
             <Localize i18n_default_text="Manual mode" />
