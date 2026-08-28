@@ -162,7 +162,20 @@ export function useAutoBot({
 
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
-    const exitSpot = typeof pos.exit_spot === 'number' ? pos.exit_spot : null;
+    // `exit_spot` isn't always populated by the time a short (e.g. 1-tick)
+    // contract first reports as closed — fall back to the last entry in
+    // `tick_stream`, which is filled in live as each tick elapses and is
+    // already relied on elsewhere (chart-markers.ts) for the same reason.
+    const lastStreamTick =
+      pos.tick_stream && pos.tick_stream.length > 0
+        ? pos.tick_stream[pos.tick_stream.length - 1]
+        : null;
+    const exitSpot =
+      typeof pos.exit_spot === 'number'
+        ? pos.exit_spot
+        : lastStreamTick
+          ? lastStreamTick.tick
+          : null;
     const exitDigit = exitSpot !== null ? getLastDigit(exitSpot, pipSize) : null;
     pushLog({ digit: exitDigit, exitSpot, won, stake: stakeAmountRef.current, profit });
     pendingContractIdRef.current = null;
