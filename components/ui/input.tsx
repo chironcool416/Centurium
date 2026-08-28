@@ -31,7 +31,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           {...props}
         />
-        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 text-[14px]">
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 select-none text-neutral-500 text-[14px]">
           {labelRight && labelRight}
         </span>
       </div>
