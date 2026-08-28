@@ -131,7 +131,11 @@ export default function HomePage() {
               <p className="text-sm text-muted-foreground">
                 <Localize i18n_default_text="Manual digit trading — pick your market, prediction and stake, and trade live." />
               </p>
-              <Button asChild className="mt-1 w-full">
+              <Button
+                asChild
+                variant="outline"
+                className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
+              >
                 <Link href="/digits">
                   <Localize i18n_default_text="Open Digits" />
                 </Link>
@@ -158,7 +162,11 @@ export default function HomePage() {
               <p className="text-sm text-muted-foreground">
                 <Localize i18n_default_text="Digit frequency analysis, recent ticks and trade history alongside manual controls." />
               </p>
-              <Button asChild variant="outline" className="mt-1 w-full">
+              <Button
+                asChild
+                variant="outline"
+                className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
+              >
                 <Link href="/robot">
                   <Localize i18n_default_text="Open Robot" />
                 </Link>
