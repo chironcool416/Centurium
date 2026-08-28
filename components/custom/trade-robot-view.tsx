@@ -508,9 +508,10 @@ export function TradeRobotView({
 
   return (
     <div className="w-full max-w-[1600px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_300px] gap-4">
-      {/* Left: Robot settings */}
+      {/* Left: Robot settings — sticky with its own scroll area on desktop
+          so it can be scrolled independently of the page. */}
       <Card
-        className={`panel-glow bg-card/30 backdrop-blur-md h-fit ${settingsPanel.className}`}
+        className={`panel-glow bg-card/30 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] ${settingsPanel.className}`}
         style={settingsPanel.style}
         onMouseEnter={settingsPanel.onMouseEnter}
         onMouseLeave={settingsPanel.onMouseLeave}
@@ -518,7 +519,7 @@ export function TradeRobotView({
         onBlur={settingsPanel.onBlur}
       >
         <div aria-hidden className={settingsPanel.overlayClassName} />
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 shrink-0">
           <CardTitle className="text-base">
             <Localize i18n_default_text="Robot settings" />
           </CardTitle>
@@ -553,7 +554,7 @@ export function TradeRobotView({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 lg:overflow-y-auto lg:min-h-0">
           <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
