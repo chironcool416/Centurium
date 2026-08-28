@@ -143,7 +143,7 @@ export function TradeControls({
           <ToggleGroupItem
             key={opt.value}
             value={opt.value}
-            className="flex-1 rounded-full text-sm font-medium text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+            className="flex-1 rounded-full text-sm font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
           >
             {opt.label}
           </ToggleGroupItem>
@@ -152,7 +152,7 @@ export function TradeControls({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="stake" className="text-xs text-muted-foreground">
+          <Label htmlFor="stake" className="text-xs font-semibold text-foreground/90">
             <Localize i18n_default_text="Stake" />
           </Label>
           <Input
@@ -169,7 +169,7 @@ export function TradeControls({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="duration" className="text-xs text-muted-foreground">
+          <Label htmlFor="duration" className="text-xs font-semibold text-foreground/90">
             <Localize i18n_default_text="Duration" />
           </Label>
           <Input
@@ -189,10 +189,10 @@ export function TradeControls({
       </div>
 
       <div className="rounded-lg border border-border p-2 sm:p-3 bg-muted/20 space-y-1.5 sm:space-y-2">
-        <p className="text-[11px] sm:text-xs text-muted-foreground mb-0 sm:mb-1">
+        <p className="text-[11px] sm:text-xs font-semibold text-foreground/80 mb-0 sm:mb-1">
           <Localize i18n_default_text="Prediction" />
         </p>
-        <p className="text-xs sm:text-sm font-medium">
+        <p className="text-xs sm:text-sm font-semibold text-foreground">
           <Localize i18n_default_text="Last digit of the price will" />{' '}
           <span className="text-primary font-bold">
             {getPredictionText(contractMode, localize)}
@@ -208,7 +208,7 @@ export function TradeControls({
         </p>
         {(proposal || isProposalLoading) && (
           <div className="flex items-center justify-between pt-1 border-t border-border">
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs font-semibold text-foreground/80">
               <Localize i18n_default_text="Payout" />
             </span>
             {isProposalLoading ? (
