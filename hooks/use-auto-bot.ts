@@ -129,9 +129,10 @@ export function useAutoBot({
 
   const start = useCallback(
     (cfg: BotConfig) => {
-      cfgRef.current = cfg;
-      stakeAmountRef.current = cfg.initialStake;
-      setCurrentStake(cfg.initialStake);
+      const initialStake = Math.round(cfg.initialStake * 100) / 100;
+      cfgRef.current = { ...cfg, initialStake };
+      stakeAmountRef.current = initialStake;
+      setCurrentStake(initialStake);
       virtualLossRef.current = 0;
       virtualTickCountRef.current = 0;
       pendingContractIdRef.current = null;
@@ -140,7 +141,7 @@ export function useAutoBot({
       if (cfg.startWithVirtual && cfg.virtualLossesNeeded > 0) {
         setPhase('virtual');
       } else {
-        setStake(String(cfg.initialStake));
+        setStake(String(initialStake));
         setPhase('awaiting-proposal');
       }
     },
@@ -220,7 +221,9 @@ export function useAutoBot({
         setPhase('stopped-loss');
         return nextPnl;
       }
-      stakeAmountRef.current = won ? cfgRef.current.initialStake : stakeAmountRef.current * cfgRef.current.multiplier;
+      stakeAmountRef.current = won
+        ? cfgRef.current.initialStake
+        : Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100;
       setCurrentStake(stakeAmountRef.current);
       setStake(String(stakeAmountRef.current));
       setPhase('awaiting-proposal');
