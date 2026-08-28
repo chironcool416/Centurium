@@ -31,7 +31,12 @@ export interface BotConfig {
    *  first loss. */
   martingaleStartAfter: number;
   targetProfit: number; // Infinity = no target
-  stopLossAmount: number; // positive number, Infinity = no stop-loss
+  stopLossAmount: number; // positive number, Infinity = no stop-loss (ignored when stopLossLossCount is finite)
+  /** Stop once this many consecutive losses occur (no intervening win).
+   *  Infinity = disabled (use `stopLossAmount` instead). Checked exactly at
+   *  the loss that reaches the count, so a value of 4 stops after the 4th
+   *  loss in a row, precisely. */
+  stopLossLossCount: number;
 }
 
 interface UseAutoBotParams {
@@ -53,8 +58,10 @@ interface UseAutoBotParams {
  *  - absorbs the first `martingaleStartAfter` consecutive losses at the
  *    initial stake, then multiplies the stake by `multiplier` on each loss
  *    beyond that; any win resets both the stake and the loss streak
- *  - stops automatically once cumulative profit reaches `targetProfit` or
- *    cumulative loss reaches `stopLossAmount`
+ *  - stops automatically once cumulative profit reaches `targetProfit`, and
+ *    on the loss side either once cumulative loss reaches `stopLossAmount`
+ *    or once `stopLossLossCount` consecutive losses occur (no intervening
+ *    win) — whichever mode is configured
  *
  * Settlement of real contracts is detected via the live `openPositions`
  * WebSocket stream (proposal_open_contract), not by polling.
@@ -81,6 +88,7 @@ export function useAutoBot({
     martingaleStartAfter: 0,
     targetProfit: Infinity,
     stopLossAmount: Infinity,
+    stopLossLossCount: Infinity,
   });
   const stakeAmountRef = useRef(1);
   const consecutiveLossesRef = useRef(0);
@@ -161,7 +169,11 @@ export function useAutoBot({
         setPhase('stopped-target');
         return nextPnl;
       }
-      if (nextPnl <= -cfgRef.current.stopLossAmount) {
+      // Amount-based stop-loss (ignored when a loss-count stop-loss is configured).
+      if (
+        cfgRef.current.stopLossLossCount === Infinity &&
+        nextPnl <= -cfgRef.current.stopLossAmount
+      ) {
         setPhase('stopped-loss');
         return nextPnl;
       }
@@ -171,6 +183,11 @@ export function useAutoBot({
         stakeAmountRef.current = cfgRef.current.initialStake;
       } else {
         consecutiveLossesRef.current += 1;
+        // Loss-count-based stop-loss: stop exactly at the configured streak length.
+        if (consecutiveLossesRef.current >= cfgRef.current.stopLossLossCount) {
+          setPhase('stopped-loss');
+          return nextPnl;
+        }
         stakeAmountRef.current =
           consecutiveLossesRef.current > cfgRef.current.martingaleStartAfter
             ? Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100
