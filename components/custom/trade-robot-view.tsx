@@ -116,16 +116,12 @@ const HISTORY_WINDOW = 100;
 const RECENT_DIGITS_SHOWN = 26;
 const ROBOT_SETTINGS_STORAGE_KEY = 'centurium:robot-settings';
 
-type StopLossMode = 'losses' | 'amount';
-
 interface SavedRobotSettings {
   multiplier: string;
   martingaleAfterLosses: string;
   initialAmount: string;
   targetProfit: string;
-  stopLossMode: StopLossMode;
   stopLossLosses: string;
-  stopLossMultiplier: string;
   duration: number;
 }
 
@@ -390,9 +386,7 @@ export function TradeRobotView({
   const [martingaleAfterLosses, setMartingaleAfterLosses] = useState('0');
   const [initialAmount, setInitialAmount] = useState('1');
   const [targetProfit, setTargetProfit] = useState('5');
-  const [stopLossMode, setStopLossMode] = useState<StopLossMode>('losses');
   const [stopLossLosses, setStopLossLosses] = useState('4');
-  const [stopLossMultiplier, setStopLossMultiplier] = useState('6');
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -404,9 +398,7 @@ export function TradeRobotView({
       if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
       if (typeof saved.initialAmount === 'string') setInitialAmount(saved.initialAmount);
       if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
-      if (saved.stopLossMode === 'losses' || saved.stopLossMode === 'amount') setStopLossMode(saved.stopLossMode);
       if (typeof saved.stopLossLosses === 'string') setStopLossLosses(saved.stopLossLosses);
-      if (typeof saved.stopLossMultiplier === 'string') setStopLossMultiplier(saved.stopLossMultiplier);
       if (typeof saved.duration === 'number') setDuration(saved.duration);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
@@ -421,9 +413,7 @@ export function TradeRobotView({
         martingaleAfterLosses,
         initialAmount,
         targetProfit,
-        stopLossMode,
         stopLossLosses,
-        stopLossMultiplier,
         duration,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
@@ -485,8 +475,7 @@ export function TradeRobotView({
     const martingaleStartAfter = Math.max(0, parseInt(martingaleAfterLosses, 10) || 0);
     const target = parseFloat(targetProfit);
     const lossCount = parseInt(stopLossLosses, 10);
-    const stopLossMult = parseFloat(stopLossMultiplier);
-    if (stopLossMode === 'losses' && (!lossCount || lossCount <= 0)) {
+    if (!lossCount || lossCount <= 0) {
       toast.error(localize('Enter a valid number of losses first.'));
       return;
     }
@@ -495,8 +484,8 @@ export function TradeRobotView({
       multiplier: mult,
       martingaleStartAfter,
       targetProfit: target > 0 ? target : Infinity,
-      stopLossLossCount: stopLossMode === 'losses' && lossCount > 0 ? lossCount : Infinity,
-      stopLossAmount: stopLossMode === 'amount' && stopLossMult > 0 ? initial * stopLossMult : Infinity,
+      stopLossLossCount: lossCount,
+      stopLossAmount: Infinity,
     });
     toast.info(localize('Robot started'), {
       description:
@@ -686,48 +675,19 @@ export function TradeRobotView({
               <Input value={targetProfit} onChange={(e) => setTargetProfit(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
+              <Label
+                className="text-xs text-muted-foreground"
+                title={localize('Stop after this many losses in a row')}
+              >
                 <Localize i18n_default_text="Stop loss" />
               </Label>
-              <div className="grid grid-cols-2 gap-1 rounded-md bg-muted/40 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setStopLossMode('losses')}
-                  title={localize('Stop after this many losses in a row')}
-                  className={cn(
-                    'rounded px-1 py-1 text-center text-[10px] font-medium leading-tight transition-colors',
-                    stopLossMode === 'losses'
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Localize i18n_default_text="Streak" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStopLossMode('amount')}
-                  title={localize('Stop after losing this many times the initial stake')}
-                  className={cn(
-                    'rounded px-1 py-1 text-center text-[10px] font-medium leading-tight transition-colors',
-                    stopLossMode === 'amount'
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Localize i18n_default_text="× Stake" />
-                </button>
-              </div>
-              {stopLossMode === 'losses' ? (
-                <Input
-                  type="number"
-                  min={1}
-                  value={stopLossLosses}
-                  onChange={(e) => setStopLossLosses(e.target.value)}
-                  labelRight={localize('losses')}
-                />
-              ) : (
-                <Input value={stopLossMultiplier} onChange={(e) => setStopLossMultiplier(e.target.value)} />
-              )}
+              <Input
+                type="number"
+                min={1}
+                value={stopLossLosses}
+                onChange={(e) => setStopLossLosses(e.target.value)}
+                labelRight={localize('losses')}
+              />
             </div>
           </div>
           </fieldset>
