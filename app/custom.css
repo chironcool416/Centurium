@@ -157,6 +157,45 @@
   }
 }
 
+/* Stop-loss "Vae Victis" modal: dark red radial backdrop behind the dialog
+   content, plus a slow-breathing red glow behind the emblem image — the
+   same bloom technique as .victory-dialog-backdrop / .victory-emblem-glow
+   above, re-themed red for a loss instead of green for a win. */
+.defeat-dialog-backdrop {
+  background:
+    radial-gradient(circle at 50% 18%, rgb(244 63 94 / 0.22) 0%, rgb(20 6 8 / 0) 55%),
+    linear-gradient(180deg, rgb(26 6 9) 0%, rgb(15 4 5) 100%);
+}
+
+@keyframes defeat-emblem-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08);
+  }
+}
+.defeat-emblem-glow {
+  background: radial-gradient(
+    circle,
+    rgb(244 63 94 / 0.55) 0%,
+    rgb(225 29 72 / 0.25) 40%,
+    rgb(225 29 72 / 0) 72%
+  );
+  filter: blur(14px);
+  animation: defeat-emblem-glow-pulse 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .defeat-emblem-glow {
+    animation: none;
+    opacity: 0.6;
+    transform: scale(1);
+  }
+}
+
 /* Loading bar beneath the emblem: fills linearly at 10%/second so it hits
    100% exactly as the flicker sequence ends. Duration is set inline per the
    splash component's actual hold time (10s normal, 2s reduced-motion). */
