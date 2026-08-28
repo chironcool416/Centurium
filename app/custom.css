@@ -118,6 +118,45 @@
   }
 }
 
+/* Take-profit "Victoria Aeterna" celebration modal: dark emerald radial
+   backdrop behind the dialog content, plus a slow-breathing green glow
+   behind the emblem image — same bloom technique as .panel-glow / the intro
+   emblem above, re-themed from blue to green for a "profit" moment. */
+.victory-dialog-backdrop {
+  background:
+    radial-gradient(circle at 50% 18%, rgb(52 211 153 / 0.22) 0%, rgb(6 20 14 / 0) 55%),
+    linear-gradient(180deg, rgb(6 25 18) 0%, rgb(4 15 11) 100%);
+}
+
+@keyframes victory-emblem-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08);
+  }
+}
+.victory-emblem-glow {
+  background: radial-gradient(
+    circle,
+    rgb(52 211 153 / 0.55) 0%,
+    rgb(16 185 129 / 0.25) 40%,
+    rgb(16 185 129 / 0) 72%
+  );
+  filter: blur(14px);
+  animation: victory-emblem-glow-pulse 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .victory-emblem-glow {
+    animation: none;
+    opacity: 0.6;
+    transform: scale(1);
+  }
+}
+
 /* Loading bar beneath the emblem: fills linearly at 10%/second so it hits
    100% exactly as the flicker sequence ends. Duration is set inline per the
    splash component's actual hold time (10s normal, 2s reduced-motion). */
