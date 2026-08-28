@@ -47,13 +47,14 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
       }}
     >
       <div className="absolute inset-0 bg-background/80" />
+      <div className="intro-emblem-glow absolute h-[70vmin] w-[70vmin] rounded-full" />
       <Image
         src="/centurium-emblem.png"
         alt="Centurium Capital"
-        width={480}
-        height={480}
+        width={1091}
+        height={1213}
         priority
-        className="intro-emblem relative h-auto w-56 select-none sm:w-72 md:w-80"
+        className="intro-emblem relative h-auto w-72 select-none sm:w-96 md:w-[28rem] lg:w-[32rem]"
       />
     </div>
   );
