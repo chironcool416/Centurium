@@ -15,8 +15,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SymbolSelector } from '@/components/custom/symbol-selector';
-import { TradeControls } from '@/components/trade-controls';
+import { TradeControls, getContractModeOptions } from '@/components/trade-controls';
 import { PositionsTable } from '@/components/custom/positions-table';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
@@ -372,6 +373,7 @@ export function TradeRobotView({
   const { localize } = useAppTranslations();
   const digitTradeTypeOptions = getDigitTradeTypeOptions(localize);
   const digitContractLabels = getDigitContractLabels(localize);
+  const contractModeOptions = getContractModeOptions(localize)[tradeType];
 
   const getPanelProps = useRobotPanelHover();
   const settingsPanel = getPanelProps('settings');
@@ -564,49 +566,70 @@ export function TradeRobotView({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              <Localize i18n_default_text="Trade Type" />
+            </Label>
+            <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {digitTradeTypeOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              <Localize i18n_default_text="Trade Function" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={contractMode}
+              onValueChange={(value) => {
+                if (value) setContractMode(value as ContractMode);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              {contractModeOptions.map((opt) => (
+                <ToggleGroupItem
+                  key={opt.value}
+                  value={opt.value}
+                  className="flex-1 rounded-full text-xs font-medium text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+                >
+                  {opt.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+
+          {tradeType !== 'even-odd' && (
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Trade Type" />
+                <Localize i18n_default_text="Prediction" />
               </Label>
-              <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
+              <Select
+                value={String(selectedDigit)}
+                onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {digitTradeTypeOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
+                  {Array.from({ length: 10 }, (_, d) => (
+                    <SelectItem key={d} value={String(d)}>
+                      {d}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                <Localize i18n_default_text="Prediction" />
-              </Label>
-              {tradeType === 'even-odd' ? (
-                <Input value={contractMode === 'DIGITEVEN' ? 'Even' : 'Odd'} disabled fullWidth />
-              ) : (
-                <Select
-                  value={String(selectedDigit)}
-                  onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 10 }, (_, d) => (
-                      <SelectItem key={d} value={String(d)}>
-                        {d}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
