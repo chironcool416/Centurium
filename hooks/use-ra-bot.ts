@@ -202,12 +202,15 @@ export function useRaBot({
     setConfirmProgress(confirmCountRef.current);
 
     // Confirmation complete — fire a trade signal (subject to Trading Mode
-    // and cooldown). Only reset confirmation on an *actual* fire, so the
-    // next fire needs a fresh unbroken run of M. In Neutral mode, or while
-    // cooldown/an in-flight trade blocks firing, the count just holds at
-    // the target ("ready and waiting") instead of silently zeroing out —
-    // it still only drops back to 0 if a genuine opposite-side digit
-    // interrupts it (handled above).
+    // and cooldown). On an *actual* fire, the whole arm state is wiped —
+    // armedSide, confirmCount, AND the primary streak — same as the
+    // extension's resetArmState() right before triggerTrade(). That means
+    // the next fire needs a completely fresh N-digit primary streak plus
+    // its own M-digit confirmation, not just a fresh M. In Neutral mode, or
+    // while cooldown/an in-flight trade blocks firing, nothing is reset —
+    // the count just holds at the target ("ready and waiting") instead of
+    // silently zeroing out — it still only drops back to 0 if a genuine
+    // opposite-side digit interrupts it (handled above).
     if (armedSideRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
       const confirmedSide = armedSideRef.current;
 
@@ -232,7 +235,12 @@ export function useRaBot({
           }
           lastTradeTimeRef.current = now;
           setPhase('awaiting-proposal');
+          // Full reset — mirrors the extension's resetArmState(): armed
+          // side and primary streak are cleared too, not just confirmCount.
+          armedSideRef.current = null;
+          primaryStreakRef.current = { side: null, count: 0 };
           confirmCountRef.current = 0;
+          setArmedSide(null);
           setConfirmProgress(0);
         }
       }
