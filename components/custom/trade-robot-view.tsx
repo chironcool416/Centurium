@@ -657,6 +657,7 @@ export function TradeRobotView({
   const raBot = useRaBot({
     currentTick,
     pipSize,
+    setStake,
     setContractMode,
     setSelectedDigit,
     proposal,
@@ -706,9 +707,17 @@ export function TradeRobotView({
       toast.error(localize('Enter a valid Confirmation Streak (2-20) first.'));
       return;
     }
+    const raStake = parseFloat(raInitialStake);
+    if (!raStake || raStake <= 0) {
+      toast.error(localize('Enter a valid Ra stake first.'));
+      return;
+    }
     raBot.start({
       streakCount,
       confirmationStreak,
+      initialStake: raStake,
+      stakeMultiplier: parseFloat(raStakeMultiplier) || 1,
+      martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
       tpIncrement: parseFloat(raTpIncrement) || 0,
       cooldownSeconds: Math.max(0, parseInt(raCooldownSeconds, 10) || 0),
       tradingMode: raTradingMode,
@@ -1041,6 +1050,36 @@ export function TradeRobotView({
               min={durationLimits.min}
               max={durationLimits.max}
               labelRight={localize('Ticks')}
+            />
+          </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake" />
+              </Label>
+              <Input value={raInitialStake} onChange={(e) => setRaInitialStake(e.target.value)} />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake Multiplier" />
+              </Label>
+              <Input value={raStakeMultiplier} onChange={(e) => setRaStakeMultiplier(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize(
+                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
+              )}
+            >
+              <Localize i18n_default_text="Start Martingale after N losses" />
+            </Label>
+            <Input
+              value={raMartingaleAfterLosses}
+              onChange={(e) => setRaMartingaleAfterLosses(e.target.value)}
             />
           </div>
 
