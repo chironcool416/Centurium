@@ -84,6 +84,18 @@
     0 0 30px 7px rgb(168 85 247 / 0.3);
   animation: side-panel-arrow-glow 2s ease-in-out infinite;
 }
+/* On hover, pause the breathing animation and hold a brighter, wider glow —
+   a static box-shadow would otherwise be overridden every frame by the
+   running keyframe animation, so pausing it is what lets the hover state
+   actually read as brighter. */
+.side-panel-arrow:hover {
+  animation-play-state: paused;
+  border-color: rgb(216 180 254 / 1);
+  box-shadow:
+    0 0 0 2px rgb(216 180 254 / 0.9),
+    0 0 28px 6px rgb(216 180 254 / 0.9),
+    0 0 60px 16px rgb(192 132 252 / 0.6);
+}
 @media (prefers-reduced-motion: reduce) {
   .side-panel-arrow {
     animation: none;
