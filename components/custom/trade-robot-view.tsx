@@ -128,6 +128,16 @@ interface SavedRobotSettings {
   targetProfit: string;
   stopLossLosses: string;
   duration: number;
+  raStreakCount: string;
+  raConfirmationStreak: string;
+  raInitialStake: string;
+  raStakeMultiplier: string;
+  raMartingaleAfterLosses: string;
+  raTpIncrement: string;
+  raCooldownSeconds: string;
+  raTradingMode: RaTradingMode;
+  raAccountTakeProfit: string;
+  raAccountStopLoss: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -633,6 +643,16 @@ export function TradeRobotView({
       if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
       if (typeof saved.stopLossLosses === 'string') setStopLossLosses(saved.stopLossLosses);
       if (typeof saved.duration === 'number') setDuration(saved.duration);
+      if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
+      if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
+      if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
+      if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
+      if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+      if (typeof saved.raTpIncrement === 'string') setRaTpIncrement(saved.raTpIncrement);
+      if (typeof saved.raCooldownSeconds === 'string') setRaCooldownSeconds(saved.raCooldownSeconds);
+      if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
+      if (typeof saved.raAccountTakeProfit === 'string') setRaAccountTakeProfit(saved.raAccountTakeProfit);
+      if (typeof saved.raAccountStopLoss === 'string') setRaAccountStopLoss(saved.raAccountStopLoss);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -648,6 +668,16 @@ export function TradeRobotView({
         targetProfit,
         stopLossLosses,
         duration,
+        raStreakCount,
+        raConfirmationStreak,
+        raInitialStake,
+        raStakeMultiplier,
+        raMartingaleAfterLosses,
+        raTpIncrement,
+        raCooldownSeconds,
+        raTradingMode,
+        raAccountTakeProfit,
+        raAccountStopLoss,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -1288,15 +1318,13 @@ export function TradeRobotView({
           )}
           </fieldset>
 
-          {botMode === 'martingale' && (
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={handleSaveSettings}
-            >
-              <Localize i18n_default_text="Save settings" />
-            </Button>
-          )}
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={handleSaveSettings}
+          >
+            <Localize i18n_default_text="Save settings" />
+          </Button>
 
           <Button
             className="w-full"
