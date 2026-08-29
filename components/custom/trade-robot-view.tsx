@@ -567,10 +567,15 @@ export function TradeRobotView({
   const [targetProfit, setTargetProfit] = useState('5');
   const [stopLossLosses, setStopLossLosses] = useState('4');
 
-  // --- Ra mode: which automated strategy the left panel runs.
+  // --- Ra mode: which automated strategy the left panel runs. Ra's stake
+  // fields are entirely separate from the Martingale bot's (multiplier,
+  // martingaleAfterLosses, initialAmount above) — Ra never reads those.
   const [botMode, setBotMode] = useState<'martingale' | 'ra'>('martingale');
   const [raStreakCount, setRaStreakCount] = useState('5');
   const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
+  const [raInitialStake, setRaInitialStake] = useState('1');
+  const [raStakeMultiplier, setRaStakeMultiplier] = useState('2.5');
+  const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
   const [raTpIncrement, setRaTpIncrement] = useState('0');
   const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
   const [raTradingMode, setRaTradingMode] = useState<RaTradingMode>('neutral');
