@@ -307,16 +307,31 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
   }
 }
 
-function getRaStatusLabel(phase: RaPhase, localize: (t: string) => string): string {
+function raSideLabel(side: RaSide, localize: (t: string) => string): string {
+  if (side === 'over4') return localize('Over 4');
+  if (side === 'under5') return localize('Under 5');
+  return '';
+}
+
+function getRaStatusLabel(
+  phase: RaPhase,
+  armedSide: RaSide,
+  confirmProgress: number,
+  confirmationStreak: string,
+  localize: (t: string) => string
+): string {
   switch (phase) {
-    case 'idle':
-      return localize('Watching…');
     case 'awaiting-proposal':
     case 'awaiting-buy':
       return localize('Placing trade…');
     case 'awaiting-settlement':
       return localize('Trade running…');
     default:
+      if (armedSide) {
+        return `${raSideLabel(armedSide, localize)} ${localize('ARMED')} — ${localize(
+          'waiting for confirmation streak'
+        )} (${confirmProgress}/${confirmationStreak})`;
+      }
       return localize('Watching…');
   }
 }
@@ -822,8 +837,10 @@ export function TradeRobotView({
             )}
           </p>
           <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
-            <span className={cn('text-xs font-bold', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
-              {botMode === 'ra' ? getRaStatusLabel(raBot.phase, localize) : getBotStatusLabel(bot.phase, localize)}
+            <span className={cn('text-xs font-bold pr-2 min-w-0', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
+              {botMode === 'ra'
+                ? getRaStatusLabel(raBot.phase, raBot.armedSide, raBot.confirmProgress, raConfirmationStreak, localize)
+                : getBotStatusLabel(bot.phase, localize)}
             </span>
             <div className="flex items-center gap-1.5">
               <span
@@ -1206,7 +1223,8 @@ export function TradeRobotView({
                 </Label>
                 {raBot.armedSide && (
                   <span className="text-[11px] font-semibold text-foreground/80">
-                    {raBot.armedSide} · {raBot.confirmProgress}/{raConfirmationStreak}
+                    {raSideLabel(raBot.armedSide, localize)} {localize('ARMED')} · {raBot.confirmProgress}/
+                    {raConfirmationStreak}
                   </span>
                 )}
               </div>
