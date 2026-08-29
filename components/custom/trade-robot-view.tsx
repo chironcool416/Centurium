@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
-import { useRaBot, type RaPhase, type RaTradingMode } from '@/hooks/use-ra-bot';
+import { useRaBot, type RaPhase, type RaTradingMode, type RaSide } from '@/hooks/use-ra-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import type {
   ActiveSymbol,
