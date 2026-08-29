@@ -189,6 +189,21 @@ export function useRaBot({
   // observed isProposalLoading=true first proves the old proposal was
   // actually cleared before we accept a new one.
   const sawProposalLoadingRef = useRef(false);
+  // Fingerprint (contractMode+selectedDigit+stake) of the last trade Ra
+  // actually requested. When a repeat trade inside a burst asks for the
+  // exact same contract/barrier/stake as last time (very common: same side
+  // all burst, and a win resets the stake right back to the base amount),
+  // useProposal's subscription params never change, so it never
+  // re-subscribes and isProposalLoading never pulses true→false. Without
+  // this, the sawProposalLoadingRef gate below would wait forever for a
+  // loading pulse that's never coming, and the burst would silently freeze
+  // in 'awaiting-proposal'. When the fingerprint matches, the already-live
+  // `proposal` is guaranteed fresh for these exact params, so we skip the
+  // pulse-wait and buy as soon as it's present. Genuinely different params
+  // (barrier flip, martingale stake bump) still go through the safer
+  // pulse-based wait, same as before.
+  const lastFireKeyRef = useRef<string | null>(null);
+  const skipLoadingWaitRef = useRef(false);
 
   const resetTracking = useCallback(() => {
     armedSideRef.current = null;
@@ -213,6 +228,8 @@ export function useRaBot({
       lastTradeTimeRef.current = 0;
       pendingContractIdRef.current = null;
       lossStreakRef.current = 0;
+      lastFireKeyRef.current = null;
+      skipLoadingWaitRef.current = false;
       setPnl(0);
       setBurstPnl(0);
       setBurstActive(false);
@@ -255,6 +272,13 @@ export function useRaBot({
       const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
       const selectedDigit = side === 'over4' ? 3 : 6;
       const barrier: 'Superior 3' | 'Inferior 6' = side === 'over4' ? 'Superior 3' : 'Inferior 6';
+
+      // Same contract/barrier/stake as the last trade we fired? Then
+      // useProposal won't re-subscribe and no loading pulse is coming —
+      // the current proposal is already valid, so don't wait for one.
+      const fireKey = `${contractMode}:${selectedDigit}:${raStake.toFixed(2)}`;
+      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      lastFireKeyRef.current = fireKey;
 
       activeTradeRef.current = { side, contractMode, selectedDigit, barrier, stake: raStake };
       setContractMode(contractMode);
@@ -383,7 +407,8 @@ export function useRaBot({
       sawProposalLoadingRef.current = true;
       return;
     }
-    if (!sawProposalLoadingRef.current || !proposal) return;
+    if (!proposal) return;
+    if (!skipLoadingWaitRef.current && !sawProposalLoadingRef.current) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
