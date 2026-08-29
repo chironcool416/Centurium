@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Localize } from '@deriv-com/translations';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
+import { useIsMobile } from '@/hooks/use-is-mobile';
 import type {
   ActiveSymbol,
   Tick,
@@ -341,6 +343,90 @@ function useRobotPanelHover() {
   return panelProps;
 }
 
+/** Which side panel is currently open. The two are mutually exclusive —
+ *  opening one always collapses the other, and the Digit panel in between
+ *  is never collapsed, only pushed left/right by the resulting resize. */
+type OpenSide = 'automated' | 'manual';
+
+// Widths for the two side panels (desktop/lg only — on mobile both panels
+// are always shown at full width, stacked, since there's no horizontal
+// space to fight over there).
+const AUTOMATED_OPEN_WIDTH = 420;
+const MANUAL_OPEN_WIDTH = 300;
+const SIDE_COLLAPSED_WIDTH = 40;
+
+/**
+ * A side panel (Automated Robot or Manual) that can collapse down to a
+ * thin strip showing only a subtle arrow. All of the panel's actual data
+ * (form values, selections, etc.) lives in state one level up in
+ * `TradeRobotView` — the Card itself is a plain presentation of that
+ * state — so it's safe to unmount its content while collapsed; nothing is
+ * lost, and it avoids `overflow-hidden` tricks that would otherwise break
+ * the panel's sticky-on-scroll behavior.
+ *
+ * The wrapper animates its layout (via framer-motion's `layout` prop) as
+ * its child swaps between the full card and the collapsed arrow, using the
+ * same spring as the Digit panel's glide so the collapse/expand and the
+ * Digit panel sliding to fill the gap read as one connected motion.
+ */
+function CollapsibleSidePanel({
+  isMobile,
+  isOpen,
+  onExpand,
+  openWidth,
+  arrowIcon: ArrowIcon,
+  ariaLabel,
+  children,
+}: {
+  isMobile: boolean;
+  isOpen: boolean;
+  onExpand: () => void;
+  openWidth: number;
+  arrowIcon: typeof ChevronLeft;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  if (isMobile) {
+    // No horizontal space constraint when stacked — always show in full.
+    return <div className="w-full">{children}</div>;
+  }
+
+  return (
+    <motion.div layout transition={ROBOT_GLIDE_SPRING} className="shrink-0 self-stretch">
+      <AnimatePresence mode="wait" initial={false}>
+        {isOpen ? (
+          <motion.div
+            key="open"
+            style={{ width: openWidth }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="h-full"
+          >
+            {children}
+          </motion.div>
+        ) : (
+          <motion.button
+            key="collapsed"
+            type="button"
+            onClick={onExpand}
+            aria-label={ariaLabel}
+            style={{ width: SIDE_COLLAPSED_WIDTH }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="h-full min-h-[240px] flex items-center justify-center rounded-xl border border-border/40 bg-card/40 backdrop-blur-sm text-foreground/35 hover:text-foreground/70 hover:bg-card/70 transition-colors"
+          >
+            <ArrowIcon className="h-4 w-4" />
+          </motion.button>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 export function TradeRobotView({
   isConnected,
   isAuthenticated,
@@ -385,6 +471,13 @@ export function TradeRobotView({
   const settingsPanel = getPanelProps('settings');
   const analysisPanel = getPanelProps('analysis');
   const manualPanel = getPanelProps('manual');
+
+  const isMobile = useIsMobile();
+  // Automated Robot is expanded and Manual is collapsed by default; the two
+  // are mutually exclusive, so a single value fully describes the layout.
+  const [openSide, setOpenSide] = useState<OpenSide>('automated');
+  const isAutomatedOpen = openSide === 'automated';
+  const isManualOpen = openSide === 'manual';
 
   const [activeTab, setActiveTab] = useState<Tab>('digits');
   // `prices` already contains the pre-fetched history merged with live ticks
@@ -535,9 +628,19 @@ export function TradeRobotView({
       onOpenChange={setDefeatOpen}
       onContinue={() => setDefeatOpen(false)}
     />
-    <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 grid grid-cols-1 lg:grid-cols-[420px_1fr_300px] gap-4">
-      {/* Left: Robot settings — sticky with its own scroll area on desktop
-          so it can be scrolled independently of the page. */}
+    <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
+      {/* Left: Automated Robot settings. Collapsible — expanded by default,
+          and mutually exclusive with the Manual panel on the far right.
+          Sticky with its own scroll area on desktop so it can be scrolled
+          independently of the page. */}
+      <CollapsibleSidePanel
+        isMobile={isMobile}
+        isOpen={isAutomatedOpen}
+        onExpand={() => setOpenSide('automated')}
+        openWidth={AUTOMATED_OPEN_WIDTH}
+        arrowIcon={ChevronRight}
+        ariaLabel={localize('Expand automated robot panel')}
+      >
       <Card
         className={`panel-glow bg-card/60 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
         style={settingsPanel.style}
@@ -757,8 +860,18 @@ export function TradeRobotView({
           </p>
         </CardContent>
       </Card>
+      </CollapsibleSidePanel>
 
-      {/* Center: analysis */}
+      {/* Center: Digit panel. Always visible, never collapses — it simply
+          fills whichever space the two side panels leave it, so it's
+          physically pushed left or right as Automated/Manual expand. The
+          `layout` prop animates that resize+reposition smoothly instead of
+          snapping when a sibling's width changes. */}
+      <motion.div
+        layout
+        transition={ROBOT_GLIDE_SPRING}
+        className={isMobile ? 'w-full' : 'flex-1 min-w-0'}
+      >
       <Card
         className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${analysisPanel.className}`}
         style={analysisPanel.style}
@@ -917,8 +1030,19 @@ export function TradeRobotView({
           )}
         </CardContent>
       </Card>
+      </motion.div>
 
-      {/* Right: Manual mode */}
+      {/* Right: Manual mode. Collapsible — collapsed by default, and
+          mutually exclusive with the Automated Robot panel on the far
+          left. Opening it collapses Automated and pushes Digit left. */}
+      <CollapsibleSidePanel
+        isMobile={isMobile}
+        isOpen={isManualOpen}
+        onExpand={() => setOpenSide('manual')}
+        openWidth={MANUAL_OPEN_WIDTH}
+        arrowIcon={ChevronLeft}
+        ariaLabel={localize('Expand manual mode panel')}
+      >
       <Card
         className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${manualPanel.className}`}
         style={manualPanel.style}
@@ -966,6 +1090,7 @@ export function TradeRobotView({
           </fieldset>
         </CardContent>
       </Card>
+      </CollapsibleSidePanel>
     </div>
     </>
   );
