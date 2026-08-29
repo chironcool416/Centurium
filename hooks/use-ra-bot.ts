@@ -170,10 +170,12 @@ export function useRaBot({
     }
 
     // Confirmation streak — only progresses once a side is armed, strict,
-    // resets to 0 (not paused) on any non-matching digit.
+    // resets to 0 (not paused) on any non-matching digit. Clamped at the
+    // target rather than left to grow unbounded once reached — see the
+    // completion block below for why it does *not* reset here.
     if (armedSideRef.current !== null) {
       if (side === armedSideRef.current) {
-        confirmCountRef.current += 1;
+        confirmCountRef.current = Math.min(confirmCountRef.current + 1, cfg.confirmationStreak);
       } else {
         confirmCountRef.current = 0;
       }
@@ -200,12 +202,14 @@ export function useRaBot({
     setConfirmProgress(confirmCountRef.current);
 
     // Confirmation complete — fire a trade signal (subject to Trading Mode
-    // and cooldown), then reset confirmation so the next fire needs a fresh
-    // unbroken run of M.
+    // and cooldown). Only reset confirmation on an *actual* fire, so the
+    // next fire needs a fresh unbroken run of M. In Neutral mode, or while
+    // cooldown/an in-flight trade blocks firing, the count just holds at
+    // the target ("ready and waiting") instead of silently zeroing out —
+    // it still only drops back to 0 if a genuine opposite-side digit
+    // interrupts it (handled above).
     if (armedSideRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
       const confirmedSide = armedSideRef.current;
-      confirmCountRef.current = 0;
-      setConfirmProgress(0);
 
       if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
         const now = Date.now();
@@ -228,6 +232,8 @@ export function useRaBot({
           }
           lastTradeTimeRef.current = now;
           setPhase('awaiting-proposal');
+          confirmCountRef.current = 0;
+          setConfirmProgress(0);
         }
       }
     }
