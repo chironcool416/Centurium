@@ -423,20 +423,23 @@ function CollapsibleSidePanel({
 
       {/* Collapsed-state arrow, anchored to the panel's inner edge (so it
           sits in the right spot whether the panel is open or shut) and
-          simply cross-fading in as the slide finishes closing. */}
+          simply cross-fading in as the slide finishes closing. Bold and
+          purple with a breathing glow — deliberately eye-catching rather
+          than subtle, so a first-time user notices there's a panel to
+          expand instead of missing it as a sliver of dead space. */}
       <button
         type="button"
         onClick={onExpand}
         aria-label={ariaLabel}
         tabIndex={isOpen ? -1 : 0}
         className={cn(
-          'absolute inset-y-0 flex items-center justify-center rounded-xl border border-border/40 bg-card/95 backdrop-blur-sm text-foreground/35 hover:text-foreground/70 hover:bg-card transition-opacity duration-200',
+          'side-panel-arrow absolute inset-y-0 flex items-center justify-center rounded-xl border-2 bg-card/95 backdrop-blur-sm text-purple-400 hover:text-purple-200 hover:bg-card transition-[opacity,color] duration-200',
           arrowSide === 'right' ? 'right-0' : 'left-0',
           isOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
         )}
         style={{ width: SIDE_COLLAPSED_WIDTH }}
       >
-        <ArrowIcon className="h-4 w-4" />
+        <ArrowIcon className="h-5 w-5" strokeWidth={2.75} />
       </button>
     </motion.div>
   );
