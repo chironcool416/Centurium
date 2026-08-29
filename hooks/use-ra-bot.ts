@@ -28,6 +28,12 @@ export interface RaBotConfig {
   streakCount: number;
   /** M — consecutive matching digits required, once armed, to fire a trade. 2-20. */
   confirmationStreak: number;
+  /** Ra's own base stake, entirely separate from the Martingale bot's stake settings. */
+  initialStake: number;
+  /** Multiplier applied to Ra's stake after a loss, once martingaleStartAfter losses have occurred. */
+  stakeMultiplier: number;
+  /** Consecutive Ra losses before the multiplier starts being applied. 0 = multiply from the first loss. */
+  martingaleStartAfter: number;
   /**
    * Native equivalent of the extension's "TP Increment": the extension bumped
    * the site's own Target Profit field by this amount after every win. Here,
@@ -47,6 +53,7 @@ export interface RaBotConfig {
 interface UseRaBotParams {
   currentTick: Tick | null;
   pipSize: number;
+  setStake: (value: string) => void;
   setContractMode: (mode: ContractMode) => void;
   setSelectedDigit: (digit: number) => void;
   proposal: ProposalInfo | null;
@@ -67,6 +74,7 @@ function sideOf(digit: number): RaSide {
 export function useRaBot({
   currentTick,
   pipSize,
+  setStake,
   setContractMode,
   setSelectedDigit,
   proposal,
@@ -91,6 +99,9 @@ export function useRaBot({
   const cfgRef = useRef<RaBotConfig>({
     streakCount: 5,
     confirmationStreak: 5,
+    initialStake: 1,
+    stakeMultiplier: 1,
+    martingaleStartAfter: 0,
     tpIncrement: 0,
     cooldownSeconds: 60,
     tradingMode: 'neutral',
@@ -108,6 +119,10 @@ export function useRaBot({
   const lastProcessedEpochRef = useRef<number | null>(null);
   const lastTradeTimeRef = useRef(0);
   const pendingContractIdRef = useRef<number | null>(null);
+  // Ra's own consecutive-loss counter, driving its own stake martingale.
+  // Entirely separate from the Martingale bot's loss tracking in
+  // use-auto-bot.ts — Ra never reads or writes that bot's state.
+  const lossStreakRef = useRef(0);
   // Guards against buying a stale proposal left over from before we changed
   // contractMode/selectedDigit: setContractMode/setSelectedDigit and the
   // phase flip to 'awaiting-proposal' happen in the same tick, but the old
@@ -136,6 +151,7 @@ export function useRaBot({
       lastProcessedEpochRef.current = null;
       lastTradeTimeRef.current = 0;
       pendingContractIdRef.current = null;
+      lossStreakRef.current = 0;
       setPnl(0);
       setDigitRecord([]);
       setStoppedReason(null);
@@ -235,6 +251,14 @@ export function useRaBot({
               : confirmedSide === 'over4'
                 ? 'under5'
                 : 'over4';
+          // Ra's own stake martingale — entirely separate from the
+          // Martingale bot's stake. Stays at initialStake until
+          // martingaleStartAfter consecutive Ra losses have occurred, then
+          // multiplies by stakeMultiplier per loss beyond that.
+          const lossesPastGrace = Math.max(0, lossStreakRef.current - cfg.martingaleStartAfter);
+          const raStake = cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
+          setStake(raStake.toFixed(2));
+
           if (tradeSide === 'over4') {
             setContractMode('DIGITOVER');
             setSelectedDigit(3);
@@ -258,7 +282,7 @@ export function useRaBot({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTick, enabled, pipSize, setContractMode, setSelectedDigit]);
+  }, [currentTick, enabled, pipSize, setStake, setContractMode, setSelectedDigit]);
 
   // --- Once a proposal for the trade type we just set is ready, buy.
   // Only proceeds once isProposalLoading has been observed true at least
@@ -298,6 +322,8 @@ export function useRaBot({
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
     pendingContractIdRef.current = null;
+
+    lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
 
     if (won && cfgRef.current.tpIncrement > 0 && takeProfitThresholdRef.current !== Infinity) {
       takeProfitThresholdRef.current += cfgRef.current.tpIncrement;
