@@ -16,12 +16,27 @@ import { getLastDigit } from '@/lib/digit-stats';
  * (DIGITOVER, barrier 3) and a confirmed under5 run trades "Inferior 6"
  * (DIGITUNDER, barrier 6) — Trend trades the same side that confirmed,
  * Counter trades the opposite side, Neutral never trades.
+ *
+ * Once a signal fires, Ra doesn't place a single trade and go back to
+ * watching — it opens a "burst": it keeps repeating the same trade
+ * (side/barrier fixed for the whole burst, stake still following Ra's own
+ * martingale on losses) back-to-back as each one settles, accumulating a
+ * burst-local P/L. The burst ends the moment that burst P/L reaches the
+ * configured Account Take Profit or Account Stop Loss, at which point Ra
+ * drops back to `idle` and resumes watching the digit stream for a brand
+ * new arm/confirm sequence to open the next burst. The bot itself (`enabled`)
+ * is unaffected by a burst ending — only an explicit stop(), or the
+ * session-level accountTakeProfit/accountStopLoss being left at 0 forever
+ * (which just means a burst never self-ends), changes that.
  */
 
 export type RaSide = 'over4' | 'under5' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
 export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
+/** Why the most recently completed burst ended — for a transient UI note,
+ *  distinct from RaStopReason which is about the whole bot stopping. */
+export type RaBurstOutcome = 'take-profit' | 'stop-loss' | 'error' | null;
 
 export interface RaBotConfig {
   /** N — consecutive same-side digits required to arm a side. 2-20. */
@@ -44,9 +59,11 @@ export interface RaBotConfig {
   /** Minimum gap between trades, in seconds. */
   cooldownSeconds: number;
   tradingMode: RaTradingMode;
-  /** Session take-profit target. 0 = off. */
+  /** Take-profit target for a single burst. 0 = off (burst only ends via
+   *  stop-loss or a failed trade). Resets fresh at the start of every burst. */
   accountTakeProfit: number;
-  /** Session stop-loss (positive number; stops once pnl <= -this). 0 = off. */
+  /** Stop-loss for a single burst (positive number; ends the burst once its
+   *  P/L <= -this). 0 = off. Resets fresh at the start of every burst. */
   accountStopLoss: number;
 }
 
@@ -95,6 +112,14 @@ export function useRaBot({
   const [lastFired, setLastFired] = useState<{ side: RaSide; barrier: 'Superior 3' | 'Inferior 6' } | null>(
     null
   );
+  // Whether Ra is currently mid-burst (has fired and is looping trades
+  // toward this burst's TP/SL) as opposed to idle and watching for a signal.
+  const [burstActive, setBurstActive] = useState(false);
+  // Cumulative P/L for the *current* burst only — resets to 0 each time a
+  // new burst opens. `pnl` above keeps accumulating across every burst for
+  // the whole run, same as before.
+  const [burstPnl, setBurstPnl] = useState(0);
+  const [lastBurstOutcome, setLastBurstOutcome] = useState<RaBurstOutcome>(null);
 
   const cfgRef = useRef<RaBotConfig>({
     streakCount: 5,
@@ -108,10 +133,23 @@ export function useRaBot({
     accountTakeProfit: 0,
     accountStopLoss: 0,
   });
-  // Runtime take-profit threshold — starts at the configured Account Take
-  // Profit and climbs by tpIncrement after every win, mirroring the
+  // Runtime take-profit threshold for the *current burst* — reset to the
+  // configured Account Take Profit at the start of every burst, and climbs
+  // by tpIncrement after every win within that burst, mirroring the
   // extension bumping the site's Target Profit field on each TP popup.
   const takeProfitThresholdRef = useRef(Infinity);
+  // Running P/L for the current burst — mirrors `burstPnl` state but usable
+  // synchronously inside the settlement effect.
+  const burstPnlRef = useRef(0);
+  // The trade Ra is currently looping within a burst — fixed for the whole
+  // burst so each subsequent trade re-fires the same side/barrier without
+  // needing the arm/confirm streaks to complete again.
+  const activeTradeRef = useRef<{
+    side: RaSide;
+    contractMode: ContractMode;
+    selectedDigit: number;
+    barrier: 'Superior 3' | 'Inferior 6';
+  } | null>(null);
 
   const armedSideRef = useRef<RaSide>(null);
   const primaryStreakRef = useRef<{ side: RaSide; count: number }>({ side: null, count: 0 });
@@ -147,12 +185,17 @@ export function useRaBot({
     (cfg: RaBotConfig) => {
       cfgRef.current = cfg;
       takeProfitThresholdRef.current = cfg.accountTakeProfit > 0 ? cfg.accountTakeProfit : Infinity;
+      burstPnlRef.current = 0;
+      activeTradeRef.current = null;
       resetTracking();
       lastProcessedEpochRef.current = null;
       lastTradeTimeRef.current = 0;
       pendingContractIdRef.current = null;
       lossStreakRef.current = 0;
       setPnl(0);
+      setBurstPnl(0);
+      setBurstActive(false);
+      setLastBurstOutcome(null);
       setDigitRecord([]);
       setStoppedReason(null);
       setLastFired(null);
@@ -167,9 +210,39 @@ export function useRaBot({
       setEnabled(false);
       setStoppedReason(reason);
       setPhase('idle');
+      setBurstActive(false);
       pendingContractIdRef.current = null;
+      activeTradeRef.current = null;
     },
     []
+  );
+
+  // --- Fires (or re-fires, mid-burst) a single trade for the given side.
+  // Computes the current martingale stake from Ra's own loss streak, sets
+  // the contract mode/barrier, and flips the phase to kick off the
+  // proposal → buy flow. Shared between opening a fresh burst and looping
+  // the same trade again after a settlement that didn't hit TP/SL yet.
+  const placeTrade = useCallback(
+    (side: Exclude<RaSide, null>) => {
+      const cfg = cfgRef.current;
+      const lossesPastGrace = Math.max(0, lossStreakRef.current - cfg.martingaleStartAfter);
+      const raStake = cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
+      setStake(raStake.toFixed(2));
+
+      const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
+      const selectedDigit = side === 'over4' ? 3 : 6;
+      const barrier: 'Superior 3' | 'Inferior 6' = side === 'over4' ? 'Superior 3' : 'Inferior 6';
+
+      activeTradeRef.current = { side, contractMode, selectedDigit, barrier };
+      setContractMode(contractMode);
+      setSelectedDigit(selectedDigit);
+      setLastFired({ side, barrier });
+
+      lastTradeTimeRef.current = Date.now();
+      sawProposalLoadingRef.current = false;
+      setPhase('awaiting-proposal');
+    },
+    [setStake, setContractMode, setSelectedDigit]
   );
 
   // --- Process each genuinely new tick: update the digit record, the
@@ -228,14 +301,17 @@ export function useRaBot({
     setArmedSide(armedSideRef.current);
     setConfirmProgress(confirmCountRef.current);
 
-    // Confirmation complete — fire a trade signal (subject to Trading Mode
-    // and cooldown). On an *actual* fire, the whole arm state is wiped —
-    // armedSide, confirmCount, AND the primary streak — same as the
-    // extension's resetArmState() right before triggerTrade(). That means
-    // the next fire needs a completely fresh N-digit primary streak plus
-    // its own M-digit confirmation, not just a fresh M. In Neutral mode, or
-    // while cooldown/an in-flight trade blocks firing, nothing is reset —
-    // the count just holds at the target ("ready and waiting") instead of
+    // Confirmation complete — open a new burst (subject to Trading Mode and
+    // cooldown). This only *opens* the burst with one trade; further trades
+    // within the same burst are fired from the settlement effect below
+    // without re-checking the arm/confirm streaks. On an *actual* fire, the
+    // whole arm state is wiped — armedSide, confirmCount, AND the primary
+    // streak — same as the extension's resetArmState() right before
+    // triggerTrade(). That means the next signal (after this burst ends)
+    // needs a completely fresh N-digit primary streak plus its own M-digit
+    // confirmation, not just a fresh M. In Neutral mode, or while
+    // cooldown/an in-flight burst blocks firing, nothing is reset — the
+    // count just holds at the target ("ready and waiting") instead of
     // silently zeroing out — it still only drops back to 0 if a genuine
     // opposite-side digit interrupts it (handled above).
     if (armedSideRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
@@ -245,32 +321,23 @@ export function useRaBot({
         const now = Date.now();
         const cooldownMs = cfg.cooldownSeconds * 1000;
         if (now - lastTradeTimeRef.current >= cooldownMs) {
-          const tradeSide: RaSide =
+          const tradeSide: Exclude<RaSide, null> =
             cfg.tradingMode === 'trend'
-              ? confirmedSide
+              ? (confirmedSide as Exclude<RaSide, null>)
               : confirmedSide === 'over4'
                 ? 'under5'
                 : 'over4';
-          // Ra's own stake martingale — entirely separate from the
-          // Martingale bot's stake. Stays at initialStake until
-          // martingaleStartAfter consecutive Ra losses have occurred, then
-          // multiplies by stakeMultiplier per loss beyond that.
-          const lossesPastGrace = Math.max(0, lossStreakRef.current - cfg.martingaleStartAfter);
-          const raStake = cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
-          setStake(raStake.toFixed(2));
 
-          if (tradeSide === 'over4') {
-            setContractMode('DIGITOVER');
-            setSelectedDigit(3);
-            setLastFired({ side: tradeSide, barrier: 'Superior 3' });
-          } else {
-            setContractMode('DIGITUNDER');
-            setSelectedDigit(6);
-            setLastFired({ side: tradeSide, barrier: 'Inferior 6' });
-          }
-          lastTradeTimeRef.current = now;
-          sawProposalLoadingRef.current = false;
-          setPhase('awaiting-proposal');
+          // Open a fresh burst: reset burst P/L and the TP threshold back
+          // to the configured base (tpIncrement may have raised it during a
+          // previous burst) before firing the opening trade.
+          burstPnlRef.current = 0;
+          setBurstPnl(0);
+          takeProfitThresholdRef.current = cfg.accountTakeProfit > 0 ? cfg.accountTakeProfit : Infinity;
+          setBurstActive(true);
+          setLastBurstOutcome(null);
+          placeTrade(tradeSide);
+
           // Full reset — mirrors the extension's resetArmState(): armed
           // side and primary streak are cleared too, not just confirmCount.
           armedSideRef.current = null;
@@ -282,7 +349,7 @@ export function useRaBot({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTick, enabled, pipSize, setStake, setContractMode, setSelectedDigit]);
+  }, [currentTick, enabled, pipSize, placeTrade]);
 
   // --- Once a proposal for the trade type we just set is ready, buy.
   // Only proceeds once isProposalLoading has been observed true at least
@@ -306,7 +373,12 @@ export function useRaBot({
       clearBuyResult();
       setPhase('awaiting-settlement');
     } else if (buyError) {
-      // Trade failed to place — go back to watching rather than hard-stopping.
+      // Trade failed to place — end the burst (rather than retrying blindly
+      // or hard-stopping the whole bot) and go back to watching for a fresh
+      // signal to open the next one.
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('error');
       setPhase('idle');
     }
   }, [phase, buyResult, buyError, clearBuyResult]);
@@ -325,28 +397,44 @@ export function useRaBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
 
+    // tpIncrement bumps this burst's own TP threshold after a win, mirroring
+    // the extension bumping the site's Target Profit field on each TP popup.
     if (won && cfgRef.current.tpIncrement > 0 && takeProfitThresholdRef.current !== Infinity) {
       takeProfitThresholdRef.current += cfgRef.current.tpIncrement;
     }
 
-    setPnl((prevPnl) => {
-      const nextPnl = prevPnl + profit;
-      if (nextPnl >= takeProfitThresholdRef.current) {
-        setEnabled(false);
-        setStoppedReason('take-profit');
-        setPhase('idle');
-        return nextPnl;
-      }
-      if (cfgRef.current.accountStopLoss > 0 && nextPnl <= -cfgRef.current.accountStopLoss) {
-        setEnabled(false);
-        setStoppedReason('stop-loss');
-        setPhase('idle');
-        return nextPnl;
-      }
+    // Overall P/L across the whole run (every burst) — never resets itself.
+    setPnl((prevPnl) => prevPnl + profit);
+
+    // This burst's own P/L — the thing actually checked against the
+    // burst-local TP/SL to decide whether to keep looping.
+    const nextBurstPnl = burstPnlRef.current + profit;
+    burstPnlRef.current = nextBurstPnl;
+    setBurstPnl(nextBurstPnl);
+
+    const hitTakeProfit = nextBurstPnl >= takeProfitThresholdRef.current;
+    const hitStopLoss = cfgRef.current.accountStopLoss > 0 && nextBurstPnl <= -cfgRef.current.accountStopLoss;
+
+    if (hitTakeProfit || hitStopLoss) {
+      // Burst complete — stop looping and go back to watching the digit
+      // stream for the next arm/confirm signal. The bot itself keeps
+      // running; only an explicit stop() disables it.
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome(hitTakeProfit ? 'take-profit' : 'stop-loss');
       setPhase('idle');
-      return nextPnl;
-    });
-  }, [phase, openPositions]);
+      return;
+    }
+
+    // Neither threshold hit yet — keep the burst going: re-fire the exact
+    // same side/barrier immediately (no cooldown, no re-arming needed).
+    const active = activeTradeRef.current;
+    if (active) {
+      placeTrade(active.side as Exclude<RaSide, null>);
+    } else {
+      setPhase('idle');
+    }
+  }, [phase, openPositions, placeTrade]);
 
   return {
     enabled,
@@ -358,6 +446,9 @@ export function useRaBot({
     armedSide,
     confirmProgress,
     lastFired,
+    burstActive,
+    burstPnl,
+    lastBurstOutcome,
     start,
     stop,
   };
