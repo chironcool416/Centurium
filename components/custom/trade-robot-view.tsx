@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
+import { useRaBot, type RaPhase, type RaTradingMode } from '@/hooks/use-ra-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import type {
   ActiveSymbol,
@@ -306,6 +307,63 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
   }
 }
 
+function getRaStatusLabel(phase: RaPhase, localize: (t: string) => string): string {
+  switch (phase) {
+    case 'idle':
+      return localize('Watching…');
+    case 'awaiting-proposal':
+    case 'awaiting-buy':
+      return localize('Placing trade…');
+    case 'awaiting-settlement':
+      return localize('Trade running…');
+    default:
+      return localize('Watching…');
+  }
+}
+
+function getRaStoppedLabel(
+  reason: 'manual' | 'take-profit' | 'stop-loss' | null,
+  localize: (t: string) => string
+): string | null {
+  switch (reason) {
+    case 'manual':
+      return localize('Stopped: Manual');
+    case 'take-profit':
+      return localize('Stopped: Take Profit');
+    case 'stop-loss':
+      return localize('Stopped: Stop Loss');
+    default:
+      return null;
+  }
+}
+
+/** Small strip of the last digits seen while Ra was on — oldest to newest,
+ *  over4 (5-9) and under5 (0-4) colored differently, newest highlighted.
+ *  Native equivalent of the extension's popup "Digit Record". */
+function RaDigitRecord({ digits }: { digits: number[] }) {
+  if (digits.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1 rounded-md bg-muted/30 p-2">
+      {digits.map((d, i) => {
+        const isOver4 = d > 4;
+        const isNewest = i === digits.length - 1;
+        return (
+          <span
+            key={i}
+            className={cn(
+              'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold tabular-nums',
+              isOver4 ? 'bg-emerald-500/25 text-emerald-400' : 'bg-rose-500/25 text-rose-400',
+              isNewest && 'ring-2 ring-primary'
+            )}
+          >
+            {d}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 type RobotPanelKey = 'settings' | 'analysis' | 'manual';
 
 /**
@@ -509,6 +567,16 @@ export function TradeRobotView({
   const [targetProfit, setTargetProfit] = useState('5');
   const [stopLossLosses, setStopLossLosses] = useState('4');
 
+  // --- Ra mode: which automated strategy the left panel runs.
+  const [botMode, setBotMode] = useState<'martingale' | 'ra'>('martingale');
+  const [raStreakCount, setRaStreakCount] = useState('5');
+  const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
+  const [raTpIncrement, setRaTpIncrement] = useState('0');
+  const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
+  const [raTradingMode, setRaTradingMode] = useState<RaTradingMode>('neutral');
+  const [raAccountTakeProfit, setRaAccountTakeProfit] = useState('0');
+  const [raAccountStopLoss, setRaAccountStopLoss] = useState('0');
+
   // Load any saved robot settings once on mount.
   useEffect(() => {
     try {
@@ -581,6 +649,24 @@ export function TradeRobotView({
     openPositions,
   });
 
+  const raBot = useRaBot({
+    currentTick,
+    pipSize,
+    setContractMode,
+    setSelectedDigit,
+    proposal,
+    isProposalLoading,
+    buyContract,
+    buyResult,
+    buyError,
+    clearBuyResult,
+    openPositions,
+  });
+
+  // Whichever strategy is currently selected — used to gate Manual mode and
+  // to decide what the Start/Stop button and header status line show.
+  const activeBotRunning = botMode === 'ra' ? raBot.running : bot.running;
+
   // Celebration modal — opens the moment the bot's phase flips to
   // `stopped-target`, independent of that phase so the user can dismiss it
   // (and start a new run) without the phase itself changing.
@@ -599,7 +685,44 @@ export function TradeRobotView({
     }
   }, [bot.phase]);
 
+  const handleRaStart = () => {
+    if (raBot.running) {
+      raBot.stop('manual');
+      toast.info(localize('Robot stopped'));
+      return;
+    }
+    const streakCount = parseInt(raStreakCount, 10);
+    const confirmationStreak = parseInt(raConfirmationStreak, 10);
+    if (!streakCount || streakCount < 2 || streakCount > 20) {
+      toast.error(localize('Enter a valid Streak Count (2-20) first.'));
+      return;
+    }
+    if (!confirmationStreak || confirmationStreak < 2 || confirmationStreak > 20) {
+      toast.error(localize('Enter a valid Confirmation Streak (2-20) first.'));
+      return;
+    }
+    raBot.start({
+      streakCount,
+      confirmationStreak,
+      tpIncrement: parseFloat(raTpIncrement) || 0,
+      cooldownSeconds: Math.max(0, parseInt(raCooldownSeconds, 10) || 0),
+      tradingMode: raTradingMode,
+      accountTakeProfit: parseFloat(raAccountTakeProfit) || 0,
+      accountStopLoss: parseFloat(raAccountStopLoss) || 0,
+    });
+    toast.info(localize('Robot started'), {
+      description:
+        raTradingMode === 'neutral'
+          ? localize('Watching for arm/confirm streaks — pick Trend or Counter to actually trade.')
+          : localize('Watching for arm/confirm streaks on the digit stream.'),
+    });
+  };
+
   const handleStart = () => {
+    if (botMode === 'ra') {
+      handleRaStart();
+      return;
+    }
     if (bot.running) {
       bot.stop();
       toast.info(localize('Robot stopped'));
@@ -685,27 +808,68 @@ export function TradeRobotView({
             )}
           </p>
           <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
-            <span className={cn('text-xs font-bold', bot.running ? 'text-emerald-400' : 'text-foreground/85')}>
-              {getBotStatusLabel(bot.phase, localize)}
+            <span className={cn('text-xs font-bold', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
+              {botMode === 'ra' ? getRaStatusLabel(raBot.phase, localize) : getBotStatusLabel(bot.phase, localize)}
             </span>
             <div className="flex items-center gap-1.5">
-              <span className={cn('text-sm font-mono font-bold tabular-nums', bot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                {bot.pnl >= 0 ? '+' : ''}
-                {bot.pnl.toFixed(2)}
-              </span>
-              <button
-                type="button"
-                onClick={bot.resetPnl}
-                title={localize('Reset profit/loss to 0')}
-                className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
+              <span
+                className={cn(
+                  'text-sm font-mono font-bold tabular-nums',
+                  (botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                )}
               >
-                <Localize i18n_default_text="Reset" />
-              </button>
+                {(botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? '+' : ''}
+                {(botMode === 'ra' ? raBot.pnl : bot.pnl).toFixed(2)}
+              </span>
+              {botMode === 'martingale' && (
+                <button
+                  type="button"
+                  onClick={bot.resetPnl}
+                  title={localize('Reset profit/loss to 0')}
+                  className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
+                >
+                  <Localize i18n_default_text="Reset" />
+                </button>
+              )}
             </div>
           </div>
+          {botMode === 'ra' && !raBot.running && getRaStoppedLabel(raBot.stoppedReason, localize) && (
+            <p className="text-[11px] text-muted-foreground px-0.5">
+              {getRaStoppedLabel(raBot.stoppedReason, localize)}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
-          <fieldset disabled={bot.running} className="space-y-3 border-0 p-0 m-0 min-w-0">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Bot Mode" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={botMode}
+              onValueChange={(v) => {
+                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra');
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem
+                value="martingale"
+                disabled={activeBotRunning}
+                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+              >
+                <Localize i18n_default_text="Martingale" />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="ra"
+                disabled={activeBotRunning}
+                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+              >
+                <Localize i18n_default_text="Ra" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Market" />
@@ -717,6 +881,8 @@ export function TradeRobotView({
             />
           </div>
 
+          {botMode === 'martingale' && (
+          <>
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trade Type" />
@@ -851,24 +1017,180 @@ export function TradeRobotView({
               />
             </div>
           </div>
+          </>
+          )}
+
+          {botMode === 'ra' && (
+          <>
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Duration" />
+            </Label>
+            <Input
+              type="number"
+              value={duration}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) setDuration(val);
+              }}
+              min={durationLimits.min}
+              max={durationLimits.max}
+              labelRight={localize('Ticks')}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('N consecutive same-side digits (over4 / under5) required to arm a run before confirmation starts.')}
+              >
+                <Localize i18n_default_text="Streak Count" />
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={20}
+                value={raStreakCount}
+                onChange={(e) => setRaStreakCount(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('M more consecutive same-side digits, uninterrupted, required after arming before the trade fires.')}
+              >
+                <Localize i18n_default_text="Confirmation Streak" />
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={20}
+                value={raConfirmationStreak}
+                onChange={(e) => setRaConfirmationStreak(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Trading Mode" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={raTradingMode}
+              onValueChange={(v) => {
+                if (v) setRaTradingMode(v as RaTradingMode);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="trend" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trend" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="neutral" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Neutral" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="counter" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Counter" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {raTradingMode === 'trend' && (
+                <Localize i18n_default_text="Confirmed over4 → Superior 3, confirmed under5 → Inferior 6." />
+              )}
+              {raTradingMode === 'neutral' && (
+                <Localize i18n_default_text="Won't trade until you pick Trend or Counter." />
+              )}
+              {raTradingMode === 'counter' && (
+                <Localize i18n_default_text="Confirmed over4 → Inferior 6, confirmed under5 → Superior 3." />
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Added to the Account Take Profit threshold after every Ra win.')}
+              >
+                <Localize i18n_default_text="TP Increment" />
+              </Label>
+              <Input value={raTpIncrement} onChange={(e) => setRaTpIncrement(e.target.value)} labelRight="USD" />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Cooldown" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={raCooldownSeconds}
+                onChange={(e) => setRaCooldownSeconds(e.target.value)}
+                labelRight={localize('sec')}
+              />
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Account Take Profit" />
+              </Label>
+              <Input
+                value={raAccountTakeProfit}
+                onChange={(e) => setRaAccountTakeProfit(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Account Stop Loss" />
+              </Label>
+              <Input
+                value={raAccountStopLoss}
+                onChange={(e) => setRaAccountStopLoss(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+          </div>
+
+          {(raBot.running || raBot.digitRecord.length > 0) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Digit Record" />
+                </Label>
+                {raBot.armedSide && (
+                  <span className="text-[11px] font-semibold text-foreground/80">
+                    {raBot.armedSide} · {raBot.confirmProgress}/{raConfirmationStreak}
+                  </span>
+                )}
+              </div>
+              <RaDigitRecord digits={raBot.digitRecord} />
+            </div>
+          )}
+          </>
+          )}
           </fieldset>
 
-          <Button
-            className="w-full"
-            variant="outline"
-            onClick={handleSaveSettings}
-          >
-            <Localize i18n_default_text="Save settings" />
-          </Button>
+          {botMode === 'martingale' && (
+            <Button
+              className="w-full"
+              variant="outline"
+              onClick={handleSaveSettings}
+            >
+              <Localize i18n_default_text="Save settings" />
+            </Button>
+          )}
 
           <Button
             className="w-full"
             size="lg"
-            variant={bot.running ? 'destructive' : 'default'}
+            variant={activeBotRunning ? 'destructive' : 'default'}
             onClick={handleStart}
             disabled={!isConnected || !isAuthenticated}
           >
-            {bot.running ? <Localize i18n_default_text="Stop" /> : <Localize i18n_default_text="Start" />}
+            {activeBotRunning ? <Localize i18n_default_text="Stop" /> : <Localize i18n_default_text="Start" />}
           </Button>
           <p className="text-[11px] text-muted-foreground text-center">
             {isAuthenticated ? (
@@ -1078,12 +1400,12 @@ export function TradeRobotView({
           </p>
         </CardHeader>
         <CardContent>
-          {bot.running && (
+          {activeBotRunning && (
             <p className="text-xs text-amber-500 bg-amber-500/10 rounded-md px-2.5 py-1.5 mb-3">
               <Localize i18n_default_text="Manual trading is paused while the robot is running." />
             </p>
           )}
-          <fieldset disabled={bot.running} className="border-0 p-0 m-0 min-w-0">
+          <fieldset disabled={activeBotRunning} className="border-0 p-0 m-0 min-w-0">
             <TradeControls
               tradeType={tradeType}
               contractMode={contractMode}
