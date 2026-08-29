@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Localize } from '@deriv-com/translations';
@@ -357,23 +357,30 @@ const SIDE_COLLAPSED_WIDTH = 40;
 
 /**
  * A side panel (Automated Robot or Manual) that can collapse down to a
- * thin strip showing only a subtle arrow. All of the panel's actual data
- * (form values, selections, etc.) lives in state one level up in
- * `TradeRobotView` — the Card itself is a plain presentation of that
- * state — so it's safe to unmount its content while collapsed; nothing is
- * lost, and it avoids `overflow-hidden` tricks that would otherwise break
- * the panel's sticky-on-scroll behavior.
+ * thin strip showing only a subtle arrow. This behaves like a real
+ * sliding drawer: the panel's content stays mounted and fully visible at
+ * all times — nothing fades or swaps — while the wrapper's *width*
+ * animates continuously between its open and collapsed size. A
+ * `clip-path` on the wrapper reveals/hides the content as that width
+ * changes, so the whole thing reads as one continuous slide rather than
+ * a pop-in/vanish.
  *
- * The wrapper animates its layout (via framer-motion's `layout` prop) as
- * its child swaps between the full card and the collapsed arrow, using the
- * same spring as the Digit panel's glide so the collapse/expand and the
- * Digit panel sliding to fill the gap read as one connected motion.
+ * `clip-path` is used instead of `overflow-hidden` deliberately: unlike
+ * `overflow`, it doesn't establish a new scroll/containing context, so it
+ * won't interfere with the Automated panel's `position: sticky` scroll
+ * behavior.
+ *
+ * All of the panel's actual data (form values, selections, etc.) lives in
+ * state one level up in `TradeRobotView` — the Card here is a plain
+ * presentation of that state — so keeping it mounted while collapsed
+ * costs nothing and there's no state to lose.
  */
 function CollapsibleSidePanel({
   isMobile,
   isOpen,
   onExpand,
   openWidth,
+  arrowSide,
   arrowIcon: ArrowIcon,
   ariaLabel,
   children,
@@ -382,6 +389,10 @@ function CollapsibleSidePanel({
   isOpen: boolean;
   onExpand: () => void;
   openWidth: number;
+  /** Which edge of the wrapper the collapsed arrow sits on — this is
+   *  always the panel's "inner" edge, the one that moves as it
+   *  slides open/shut. */
+  arrowSide: 'left' | 'right';
   arrowIcon: typeof ChevronLeft;
   ariaLabel: string;
   children: React.ReactNode;
@@ -392,37 +403,41 @@ function CollapsibleSidePanel({
   }
 
   return (
-    <motion.div layout transition={ROBOT_GLIDE_SPRING} className="shrink-0 self-stretch">
-      <AnimatePresence mode="wait" initial={false}>
-        {isOpen ? (
-          <motion.div
-            key="open"
-            style={{ width: openWidth }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="h-full"
-          >
-            {children}
-          </motion.div>
-        ) : (
-          <motion.button
-            key="collapsed"
-            type="button"
-            onClick={onExpand}
-            aria-label={ariaLabel}
-            style={{ width: SIDE_COLLAPSED_WIDTH }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="h-full min-h-[240px] flex items-center justify-center rounded-xl border border-border/40 bg-card/40 backdrop-blur-sm text-foreground/35 hover:text-foreground/70 hover:bg-card/70 transition-colors"
-          >
-            <ArrowIcon className="h-4 w-4" />
-          </motion.button>
+    <motion.div
+      initial={false}
+      animate={{ width: isOpen ? openWidth : SIDE_COLLAPSED_WIDTH }}
+      transition={ROBOT_GLIDE_SPRING}
+      style={{ clipPath: 'inset(0)' }}
+      className="relative shrink-0 self-stretch"
+    >
+      {/* Fixed at its full open width so it never reflows — the wrapper's
+          clip-path is what continuously reveals or hides it as the width
+          above animates, which is what produces the sliding motion. */}
+      <div
+        style={{ width: openWidth }}
+        className={cn('h-full', !isOpen && 'pointer-events-none')}
+        aria-hidden={!isOpen}
+      >
+        {children}
+      </div>
+
+      {/* Collapsed-state arrow, anchored to the panel's inner edge (so it
+          sits in the right spot whether the panel is open or shut) and
+          simply cross-fading in as the slide finishes closing. */}
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label={ariaLabel}
+        tabIndex={isOpen ? -1 : 0}
+        className={cn(
+          'absolute inset-y-0 flex items-center justify-center rounded-xl border border-border/40 bg-card/95 backdrop-blur-sm text-foreground/35 hover:text-foreground/70 hover:bg-card transition-opacity duration-200',
+          arrowSide === 'right' ? 'right-0' : 'left-0',
+          isOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
         )}
-      </AnimatePresence>
+        style={{ width: SIDE_COLLAPSED_WIDTH }}
+      >
+        <ArrowIcon className="h-4 w-4" />
+      </button>
     </motion.div>
   );
 }
@@ -638,6 +653,7 @@ export function TradeRobotView({
         isOpen={isAutomatedOpen}
         onExpand={() => setOpenSide('automated')}
         openWidth={AUTOMATED_OPEN_WIDTH}
+        arrowSide="right"
         arrowIcon={ChevronRight}
         ariaLabel={localize('Expand automated robot panel')}
       >
@@ -863,15 +879,12 @@ export function TradeRobotView({
       </CollapsibleSidePanel>
 
       {/* Center: Digit panel. Always visible, never collapses — it simply
-          fills whichever space the two side panels leave it, so it's
-          physically pushed left or right as Automated/Manual expand. The
-          `layout` prop animates that resize+reposition smoothly instead of
-          snapping when a sibling's width changes. */}
-      <motion.div
-        layout
-        transition={ROBOT_GLIDE_SPRING}
-        className={isMobile ? 'w-full' : 'flex-1 min-w-0'}
-      >
+          fills whichever space the two side panels leave it. Since the
+          side panels animate their own width every frame (not via a
+          discrete swap), the browser reflows this panel's size in lock
+          step automatically — no extra animation needed here for it to
+          read as being smoothly pushed left/right. */}
+      <div className={isMobile ? 'w-full' : 'flex-1 min-w-0'}>
       <Card
         className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${analysisPanel.className}`}
         style={analysisPanel.style}
@@ -1030,7 +1043,7 @@ export function TradeRobotView({
           )}
         </CardContent>
       </Card>
-      </motion.div>
+      </div>
 
       {/* Right: Manual mode. Collapsible — collapsed by default, and
           mutually exclusive with the Automated Robot panel on the far
@@ -1040,6 +1053,7 @@ export function TradeRobotView({
         isOpen={isManualOpen}
         onExpand={() => setOpenSide('manual')}
         openWidth={MANUAL_OPEN_WIDTH}
+        arrowSide="left"
         arrowIcon={ChevronLeft}
         ariaLabel={localize('Expand manual mode panel')}
       >
