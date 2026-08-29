@@ -108,6 +108,17 @@ export function useRaBot({
   const lastProcessedEpochRef = useRef<number | null>(null);
   const lastTradeTimeRef = useRef(0);
   const pendingContractIdRef = useRef<number | null>(null);
+  // Guards against buying a stale proposal left over from before we changed
+  // contractMode/selectedDigit: setContractMode/setSelectedDigit and the
+  // phase flip to 'awaiting-proposal' happen in the same tick, but the old
+  // proposal (for the previous contract type/barrier) isn't cleared until a
+  // separate hook's effect runs — which can land one render later. Without
+  // this guard, the "proposal ready" check below can see that stale
+  // leftover proposal as truthy and buy it immediately, which the API then
+  // rejects (or worse, silently buys the wrong contract). Requiring an
+  // observed isProposalLoading=true first proves the old proposal was
+  // actually cleared before we accept a new one.
+  const sawProposalLoadingRef = useRef(false);
 
   const resetTracking = useCallback(() => {
     armedSideRef.current = null;
@@ -234,6 +245,7 @@ export function useRaBot({
             setLastFired({ side: tradeSide, barrier: 'Inferior 6' });
           }
           lastTradeTimeRef.current = now;
+          sawProposalLoadingRef.current = false;
           setPhase('awaiting-proposal');
           // Full reset — mirrors the extension's resetArmState(): armed
           // side and primary streak are cleared too, not just confirmCount.
@@ -249,9 +261,15 @@ export function useRaBot({
   }, [currentTick, enabled, pipSize, setContractMode, setSelectedDigit]);
 
   // --- Once a proposal for the trade type we just set is ready, buy.
+  // Only proceeds once isProposalLoading has been observed true at least
+  // once since firing — see sawProposalLoadingRef above for why.
   useEffect(() => {
     if (phase !== 'awaiting-proposal') return;
-    if (isProposalLoading || !proposal) return;
+    if (isProposalLoading) {
+      sawProposalLoadingRef.current = true;
+      return;
+    }
+    if (!sawProposalLoadingRef.current || !proposal) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
