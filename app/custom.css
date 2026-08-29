@@ -56,6 +56,40 @@
   }
 }
 
+/* Collapsed Robot-tab side-panel arrow (Automated Robot / Manual): a bold,
+   breathing purple glow so the collapse/expand control reads as an obvious
+   interactive affordance instead of a sliver a first-time user could miss. */
+@keyframes side-panel-arrow-glow {
+  0%,
+  100% {
+    border-color: rgb(168 85 247 / 0.7);
+    box-shadow:
+      0 0 0 1px rgb(168 85 247 / 0.45),
+      0 0 14px 2px rgb(168 85 247 / 0.55),
+      0 0 30px 7px rgb(168 85 247 / 0.3);
+  }
+  50% {
+    border-color: rgb(192 132 252 / 1);
+    box-shadow:
+      0 0 0 1px rgb(192 132 252 / 0.7),
+      0 0 22px 4px rgb(192 132 252 / 0.75),
+      0 0 46px 12px rgb(192 132 252 / 0.4);
+  }
+}
+.side-panel-arrow {
+  border-color: rgb(168 85 247 / 0.7);
+  box-shadow:
+    0 0 0 1px rgb(168 85 247 / 0.45),
+    0 0 14px 2px rgb(168 85 247 / 0.55),
+    0 0 30px 7px rgb(168 85 247 / 0.3);
+  animation: side-panel-arrow-glow 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-arrow {
+    animation: none;
+  }
+}
+
 /* Intro splash: the emblem blinks/breathes with a glowing blue halo for a
    few cycles before the overlay fades out to reveal the homepage. Opacity
    and the glow's spread/intensity move together so the "blink" reads as the
