@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
-import { useRaBot, type RaPhase, type RaTradingMode, type RaSide } from '@/hooks/use-ra-bot';
+import { useRaBot, type RaPhase, type RaTradingMode, type RaSide, type RaLogEntry } from '@/hooks/use-ra-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import type {
   ActiveSymbol,
@@ -318,14 +318,20 @@ function getRaStatusLabel(
   armedSide: RaSide,
   confirmProgress: number,
   confirmationStreak: string,
-  localize: (t: string) => string
+  localize: (t: string) => string,
+  burstActive?: boolean,
+  burstPnl?: number
 ): string {
   switch (phase) {
     case 'awaiting-proposal':
     case 'awaiting-buy':
-      return localize('Placing trade…');
+      return burstActive
+        ? `${localize('Placing trade…')} (${(burstPnl ?? 0) >= 0 ? '+' : ''}${(burstPnl ?? 0).toFixed(2)})`
+        : localize('Placing trade…');
     case 'awaiting-settlement':
-      return localize('Trade running…');
+      return burstActive
+        ? `${localize('Trade running…')} (${(burstPnl ?? 0) >= 0 ? '+' : ''}${(burstPnl ?? 0).toFixed(2)})`
+        : localize('Trade running…');
     default:
       if (armedSide) {
         return `${raSideLabel(armedSide, localize)} ${localize('ARMED')} — ${localize(
@@ -347,6 +353,24 @@ function getRaStoppedLabel(
       return localize('Stopped: Take Profit');
     case 'stop-loss':
       return localize('Stopped: Stop Loss');
+    default:
+      return null;
+  }
+}
+
+/** Transient note shown while Ra is still running but idle between bursts,
+ *  explaining how the last burst ended before a new signal opens the next one. */
+function getRaLastBurstLabel(
+  outcome: 'take-profit' | 'stop-loss' | 'error' | null,
+  localize: (t: string) => string
+): string | null {
+  switch (outcome) {
+    case 'take-profit':
+      return localize('Last run hit its Take Profit — watching for the next signal.');
+    case 'stop-loss':
+      return localize('Last run hit its Stop Loss — watching for the next signal.');
+    case 'error':
+      return localize('Last trade failed — watching for the next signal.');
     default:
       return null;
   }
@@ -839,7 +863,15 @@ export function TradeRobotView({
           <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
             <span className={cn('text-xs font-bold pr-2 min-w-0', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
               {botMode === 'ra'
-                ? getRaStatusLabel(raBot.phase, raBot.armedSide, raBot.confirmProgress, raConfirmationStreak, localize)
+                ? getRaStatusLabel(
+                    raBot.phase,
+                    raBot.armedSide,
+                    raBot.confirmProgress,
+                    raConfirmationStreak,
+                    localize,
+                    raBot.burstActive,
+                    raBot.burstPnl
+                  )
                 : getBotStatusLabel(bot.phase, localize)}
             </span>
             <div className="flex items-center gap-1.5">
@@ -869,6 +901,14 @@ export function TradeRobotView({
               {getRaStoppedLabel(raBot.stoppedReason, localize)}
             </p>
           )}
+          {botMode === 'ra' &&
+            raBot.running &&
+            !raBot.burstActive &&
+            getRaLastBurstLabel(raBot.lastBurstOutcome, localize) && (
+              <p className="text-[11px] text-muted-foreground px-0.5">
+                {getRaLastBurstLabel(raBot.lastBurstOutcome, localize)}
+              </p>
+            )}
         </CardHeader>
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
@@ -1194,8 +1234,13 @@ export function TradeRobotView({
 
           <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Account Take Profit" />
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once a signal fires, Ra keeps trading that side until this run\'s profit reaches this amount, then goes back to watching. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Take Profit (per run)" />
               </Label>
               <Input
                 value={raAccountTakeProfit}
@@ -1204,8 +1249,13 @@ export function TradeRobotView({
               />
             </div>
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Account Stop Loss" />
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once a signal fires, Ra keeps trading that side until this run\'s loss reaches this amount, then goes back to watching. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Stop Loss (per run)" />
               </Label>
               <Input
                 value={raAccountStopLoss}
@@ -1214,6 +1264,9 @@ export function TradeRobotView({
               />
             </div>
           </div>
+          <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
+            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Ra's own martingale on losses) until its Take Profit or Stop Loss is hit, then Ra waits for the next signal." />
+          </p>
 
           {(raBot.running || raBot.digitRecord.length > 0) && (
             <div className="space-y-1.5">
@@ -1392,7 +1445,53 @@ export function TradeRobotView({
             </>
           )}
 
-          {activeTab === 'logs' && (
+          {activeTab === 'logs' && botMode === 'ra' && (
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+              {raBot.log.length === 0 && (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
+                </div>
+              )}
+              {[...raBot.log].reverse().map((entry: RaLogEntry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
+                      {localize('Real')}
+                    </span>
+                    {entry.side && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
+                        {raSideLabel(entry.side, localize)}
+                        {entry.barrier ? ` · ${entry.barrier}` : ''}
+                      </span>
+                    )}
+                    <span className="text-foreground/80 font-medium">
+                      {new Date(entry.time).toLocaleTimeString()}
+                    </span>
+                    {entry.exitSpot !== null && (
+                      <span className="tabular-nums font-mono font-semibold text-foreground">{entry.exitSpot.toFixed(pipSize)}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="tabular-nums text-foreground/70">
+                      {localize('Stake')} {entry.stake.toFixed(2)}
+                    </span>
+                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {entry.won ? localize('Win') : localize('Loss')}
+                    </span>
+                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                      {entry.profit >= 0 ? '+' : ''}
+                      {entry.profit.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'logs' && botMode === 'martingale' && (
             <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
               {bot.log.length === 0 && (
                 <div className="py-10 text-center text-sm text-muted-foreground">
