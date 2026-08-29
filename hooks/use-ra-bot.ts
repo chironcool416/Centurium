@@ -38,6 +38,20 @@ export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-
  *  distinct from RaStopReason which is about the whole bot stopping. */
 export type RaBurstOutcome = 'take-profit' | 'stop-loss' | 'error' | null;
 
+/** One settled Ra trade, for the Logs tab — same shape/purpose as the
+ *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired. */
+export interface RaLogEntry {
+  id: number;
+  time: number;
+  side: RaSide;
+  barrier: 'Superior 3' | 'Inferior 6' | null;
+  digit: number | null;
+  exitSpot: number | null;
+  won: boolean;
+  stake: number;
+  profit: number;
+}
+
 export interface RaBotConfig {
   /** N — consecutive same-side digits required to arm a side. 2-20. */
   streakCount: number;
@@ -120,6 +134,8 @@ export function useRaBot({
   // the whole run, same as before.
   const [burstPnl, setBurstPnl] = useState(0);
   const [lastBurstOutcome, setLastBurstOutcome] = useState<RaBurstOutcome>(null);
+  const [log, setLog] = useState<RaLogEntry[]>([]);
+  const logIdRef = useRef(0);
 
   const cfgRef = useRef<RaBotConfig>({
     streakCount: 5,
@@ -149,6 +165,7 @@ export function useRaBot({
     contractMode: ContractMode;
     selectedDigit: number;
     barrier: 'Superior 3' | 'Inferior 6';
+    stake: number;
   } | null>(null);
 
   const armedSideRef = useRef<RaSide>(null);
@@ -181,6 +198,10 @@ export function useRaBot({
     setConfirmProgress(0);
   }, []);
 
+  const pushLog = useCallback((entry: Omit<RaLogEntry, 'id' | 'time'>) => {
+    setLog((prev) => [...prev.slice(-49), { ...entry, id: logIdRef.current++, time: Date.now() }]);
+  }, []);
+
   const start = useCallback(
     (cfg: RaBotConfig) => {
       cfgRef.current = cfg;
@@ -196,6 +217,8 @@ export function useRaBot({
       setBurstPnl(0);
       setBurstActive(false);
       setLastBurstOutcome(null);
+      setLog([]);
+      logIdRef.current = 0;
       setDigitRecord([]);
       setStoppedReason(null);
       setLastFired(null);
@@ -233,7 +256,7 @@ export function useRaBot({
       const selectedDigit = side === 'over4' ? 3 : 6;
       const barrier: 'Superior 3' | 'Inferior 6' = side === 'over4' ? 'Superior 3' : 'Inferior 6';
 
-      activeTradeRef.current = { side, contractMode, selectedDigit, barrier };
+      activeTradeRef.current = { side, contractMode, selectedDigit, barrier, stake: raStake };
       setContractMode(contractMode);
       setSelectedDigit(selectedDigit);
       setLastFired({ side, barrier });
@@ -395,6 +418,32 @@ export function useRaBot({
     const won = profit > 0;
     pendingContractIdRef.current = null;
 
+    // Exit spot / digit for the log — exit_spot can lag behind is_sold for
+    // short contracts, so fall back to the last tick in tick_stream, same
+    // reasoning/approach as the Martingale bot's log (use-auto-bot.ts).
+    const lastStreamTick =
+      pos.tick_stream && pos.tick_stream.length > 0
+        ? pos.tick_stream[pos.tick_stream.length - 1]
+        : null;
+    const exitSpot =
+      typeof pos.exit_spot === 'number'
+        ? pos.exit_spot
+        : lastStreamTick
+          ? lastStreamTick.tick
+          : null;
+    const exitDigit = exitSpot !== null ? getLastDigit(exitSpot, pipSize) : null;
+
+    const tradeInfo = activeTradeRef.current;
+    pushLog({
+      side: tradeInfo?.side ?? null,
+      barrier: tradeInfo?.barrier ?? null,
+      digit: exitDigit,
+      exitSpot,
+      won,
+      stake: tradeInfo?.stake ?? 0,
+      profit,
+    });
+
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
 
     // tpIncrement bumps this burst's own TP threshold after a win, mirroring
@@ -434,7 +483,7 @@ export function useRaBot({
     } else {
       setPhase('idle');
     }
-  }, [phase, openPositions, placeTrade]);
+  }, [phase, openPositions, placeTrade, pushLog]);
 
   return {
     enabled,
@@ -449,6 +498,7 @@ export function useRaBot({
     burstActive,
     burstPnl,
     lastBurstOutcome,
+    log,
     start,
     stop,
   };
