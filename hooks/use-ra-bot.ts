@@ -471,12 +471,6 @@ export function useRaBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
 
-    // tpIncrement bumps this burst's own TP threshold after a win, mirroring
-    // the extension bumping the site's Target Profit field on each TP popup.
-    if (won && cfgRef.current.tpIncrement > 0 && takeProfitThresholdRef.current !== Infinity) {
-      takeProfitThresholdRef.current += cfgRef.current.tpIncrement;
-    }
-
     // Overall P/L across the whole run (every burst) — never resets itself.
     setPnl((prevPnl) => prevPnl + profit);
 
@@ -486,6 +480,11 @@ export function useRaBot({
     burstPnlRef.current = nextBurstPnl;
     setBurstPnl(nextBurstPnl);
 
+    // Check TP/SL against the CURRENT threshold before any tpIncrement bump.
+    // Bumping first (the old order) meant a win that finally reached the
+    // configured Take Profit would raise the ceiling before the comparison
+    // ever ran, so the run sailed straight past the target chasing a bar
+    // that kept sliding away — exactly the "$5 TP, stopped past $6" bug.
     const hitTakeProfit = nextBurstPnl >= takeProfitThresholdRef.current;
     const hitStopLoss = cfgRef.current.accountStopLoss > 0 && nextBurstPnl <= -cfgRef.current.accountStopLoss;
 
@@ -502,6 +501,13 @@ export function useRaBot({
 
     // Neither threshold hit yet — keep the burst going: re-fire the exact
     // same side/barrier immediately (no cooldown, no re-arming needed).
+    // The tpIncrement bump for a win belongs here, not before the check
+    // above — it's supposed to raise the bar for the *next* trade in an
+    // ongoing burst, not the one that just settled.
+    if (won && cfgRef.current.tpIncrement > 0 && takeProfitThresholdRef.current !== Infinity) {
+      takeProfitThresholdRef.current += cfgRef.current.tpIncrement;
+    }
+
     const active = activeTradeRef.current;
     if (active) {
       placeTrade(active.side as Exclude<RaSide, null>);
