@@ -35,11 +35,22 @@ export type RaSide = 'over4' | 'under5' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
 export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
+/** How a burst decides when to end.
+ *  - 'win-and-wait' (default, original behavior): the burst ends the
+ *    moment it wins, then Ra goes back to watching for a fresh signal.
+ *  - 'run-to-target': the burst ignores individual wins/losses and keeps
+ *    trading the same side (martingale still applies on each loss) until
+ *    the *run's own* Take Profit or Stop Loss (checked against this
+ *    burst's running P/L) is hit — only then does it end and go back to
+ *    watching for the next signal. */
+export type RaRunStrategy = 'win-and-wait' | 'run-to-target';
 /** Why the most recently completed burst ended — for a transient UI note.
- *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
- *  whole bot (see RaStopReason) rather than just ending a burst, so this is
- *  only ever a win or a failed trade. */
-export type RaBurstOutcome = 'won' | 'error' | null;
+ *  Distinct from RaStopReason: reaching the *whole-run* Take Profit/Stop
+ *  Loss stops the whole bot (see RaStopReason) rather than just ending a
+ *  burst. 'run-target' is Run-to-Target's own equivalent at the burst
+ *  level — the burst's own TP/SL was hit, so it ended even though the
+ *  triggering trade may have been a win or a loss. */
+export type RaBurstOutcome = 'won' | 'error' | 'run-target' | null;
 
 /** One settled Ra trade, for the Logs tab — same shape/purpose as the
  *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired. */
@@ -67,6 +78,14 @@ export interface RaBotConfig {
   /** Consecutive Ra losses before the multiplier starts being applied. 0 = multiply from the first loss. */
   martingaleStartAfter: number;
   tradingMode: RaTradingMode;
+  /** Which strategy decides when a burst ends. Defaults to 'win-and-wait'. */
+  runStrategy: RaRunStrategy;
+  /** Only used when runStrategy === 'run-to-target': this burst ends once
+   *  its own running P/L reaches this amount. 0 = off. */
+  runTakeProfit: number;
+  /** Only used when runStrategy === 'run-to-target': this burst ends once
+   *  its own running P/L <= -this. 0 = off. */
+  runStopLoss: number;
   /** Take-profit for the whole run: once total P/L (across every burst)
    *  reaches this, the bot stops outright. 0 = off. */
   takeProfit: number;
@@ -111,6 +130,7 @@ export function useRaBot({
   openPositions,
 }: UseRaBotParams) {
   const [enabled, setEnabled] = useState(false);
+  const [runStrategy, setRunStrategy] = useState<RaRunStrategy>('win-and-wait');
   const [phase, setPhase] = useState<RaPhase>('idle');
   const [pnl, setPnl] = useState(0);
   const [digitRecord, setDigitRecord] = useState<number[]>([]);
@@ -138,6 +158,9 @@ export function useRaBot({
     stakeMultiplier: 1,
     martingaleStartAfter: 0,
     tradingMode: 'neutral',
+    runStrategy: 'win-and-wait',
+    runTakeProfit: 0,
+    runStopLoss: 0,
     takeProfit: 0,
     stopLoss: 0,
   });
@@ -212,6 +235,7 @@ export function useRaBot({
   const start = useCallback(
     (cfg: RaBotConfig) => {
       cfgRef.current = cfg;
+      setRunStrategy(cfg.runStrategy);
       pnlRef.current = 0;
       burstPnlRef.current = 0;
       activeTradeRef.current = null;
@@ -480,10 +504,41 @@ export function useRaBot({
       return;
     }
 
+    // --- Run-to-Target: ignore this trade's win/loss outcome entirely.
+    // The burst keeps firing the same side (martingale still bumps the
+    // stake on each loss, via lossStreakRef above) until the *burst's
+    // own* running P/L crosses its own Take Profit or Stop Loss. Only
+    // then does the burst end and Ra go back to watching for the next
+    // signal — a win partway through does NOT end it early.
+    if (cfg.runStrategy === 'run-to-target') {
+      const hitRunTakeProfit = cfg.runTakeProfit > 0 && nextBurstPnl >= cfg.runTakeProfit;
+      const hitRunStopLoss = cfg.runStopLoss > 0 && nextBurstPnl <= -cfg.runStopLoss;
+
+      if (hitRunTakeProfit || hitRunStopLoss) {
+        activeTradeRef.current = null;
+        setBurstActive(false);
+        setLastBurstOutcome('run-target');
+        setPhase('idle');
+        // Fresh martingale for the next run, same as a Win-and-Wait win.
+        lossStreakRef.current = 0;
+        return;
+      }
+
+      const active = activeTradeRef.current;
+      if (active) {
+        placeTrade(active.side as Exclude<RaSide, null>);
+      } else {
+        setPhase('idle');
+      }
+      return;
+    }
+
+    // --- Win-and-Wait (default, unchanged): a win ends the burst
+    // immediately and Ra goes back to watching the digit stream for the
+    // next arm/confirm signal. The bot itself keeps running; only an
+    // explicit stop() (manual, or whole-run Take Profit/Stop Loss above)
+    // disables it.
     if (won) {
-      // Burst won — go back to watching the digit stream for the next
-      // arm/confirm signal. The bot itself keeps running; only an explicit
-      // stop() (manual, or Take Profit/Stop Loss above) disables it.
       activeTradeRef.current = null;
       setBurstActive(false);
       setLastBurstOutcome('won');
@@ -504,6 +559,7 @@ export function useRaBot({
   return {
     enabled,
     running: enabled,
+    runStrategy,
     phase,
     pnl,
     digitRecord,
