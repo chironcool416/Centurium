@@ -450,3 +450,53 @@
     1px 1px 0 rgb(255 214 160 / 0.35),
     2px 2px 3px rgb(0 0 0 / 0.5);
 }
+
+/* Digit panel background engraving: an oversized "MINERVA" watermark carved
+   into the panel behind the tabs/content — same bronze-metal fill and
+   carved-groove shadow recipe as .minerva-engraved-title, just scaled up
+   to fill the panel, letter-spaced so it reads as evenly spread across the
+   full width, and faded down so it sits behind rather than fights with the
+   foreground UI. Negative z-index keeps it under the panel's own static
+   content while still painting above the card's background/border layer. */
+.minerva-digit-engraved-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+.minerva-digit-engraved-bg span {
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  font-weight: 800;
+  font-size: clamp(3.5rem, 13vw, 11rem);
+  letter-spacing: 0.5em;
+  /* Compensate for the trailing letter-spacing gap so the word still
+     reads as visually centered rather than shifted left. */
+  padding-left: 0.5em;
+  background: linear-gradient(
+    180deg,
+    rgb(230 196 140) 0%,
+    rgb(180 132 70) 45%,
+    rgb(120 82 40) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.16;
+  text-shadow:
+    -1px -1px 0 rgb(0 0 0 / 0.75),
+    -2px -2px 2px rgb(0 0 0 / 0.4),
+    1px 1px 0 rgb(255 214 160 / 0.35),
+    2px 2px 3px rgb(0 0 0 / 0.5);
+}
+@media (max-width: 640px) {
+  .minerva-digit-engraved-bg span {
+    letter-spacing: 0.22em;
+    padding-left: 0.22em;
+  }
+}
