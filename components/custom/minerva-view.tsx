@@ -131,9 +131,11 @@ interface SavedRobotSettings {
   raInitialStake: string;
   raStakeMultiplier: string;
   raMartingaleAfterLosses: string;
+  raTpIncrement: string;
+  raCooldownSeconds: string;
   raTradingMode: MinervaTradingMode;
-  raTakeProfit: string;
-  raStopLoss: string;
+  raAccountTakeProfit: string;
+  raAccountStopLoss: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -342,12 +344,14 @@ function getRaStoppedLabel(
 /** Transient note shown while Minerva is still running but idle between bursts,
  *  explaining how the last burst ended before a new signal opens the next one. */
 function getRaLastBurstLabel(
-  outcome: 'won' | 'error' | null,
+  outcome: 'take-profit' | 'stop-loss' | 'error' | null,
   localize: (t: string) => string
 ): string | null {
   switch (outcome) {
-    case 'won':
-      return localize('Last run finished in profit — watching for the next signal.');
+    case 'take-profit':
+      return localize('Last run hit its Take Profit — watching for the next signal.');
+    case 'stop-loss':
+      return localize('Last run hit its Stop Loss — watching for the next signal.');
     case 'error':
       return localize('Last trade failed — watching for the next signal.');
     default:
@@ -583,9 +587,11 @@ export function MinervaView({
   const [raInitialStake, setRaInitialStake] = useState('1');
   const [raStakeMultiplier, setRaStakeMultiplier] = useState('2.5');
   const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
+  const [raTpIncrement, setRaTpIncrement] = useState('0');
+  const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
   const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
-  const [raTakeProfit, setRaTakeProfit] = useState('0');
-  const [raStopLoss, setRaStopLoss] = useState('0');
+  const [raAccountTakeProfit, setRaAccountTakeProfit] = useState('0');
+  const [raAccountStopLoss, setRaAccountStopLoss] = useState('0');
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -599,9 +605,11 @@ export function MinervaView({
       if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
       if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
       if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+      if (typeof saved.raTpIncrement === 'string') setRaTpIncrement(saved.raTpIncrement);
+      if (typeof saved.raCooldownSeconds === 'string') setRaCooldownSeconds(saved.raCooldownSeconds);
       if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
-      if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
-      if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+      if (typeof saved.raAccountTakeProfit === 'string') setRaAccountTakeProfit(saved.raAccountTakeProfit);
+      if (typeof saved.raAccountStopLoss === 'string') setRaAccountStopLoss(saved.raAccountStopLoss);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -617,9 +625,11 @@ export function MinervaView({
         raInitialStake,
         raStakeMultiplier,
         raMartingaleAfterLosses,
+        raTpIncrement,
+        raCooldownSeconds,
         raTradingMode,
-        raTakeProfit,
-        raStopLoss,
+        raAccountTakeProfit,
+        raAccountStopLoss,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -699,9 +709,11 @@ export function MinervaView({
       initialStake: raStake,
       stakeMultiplier: parseFloat(raStakeMultiplier) || 1,
       martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
+      tpIncrement: parseFloat(raTpIncrement) || 0,
+      cooldownSeconds: Math.max(0, parseInt(raCooldownSeconds, 10) || 0),
       tradingMode: raTradingMode,
-      takeProfit: parseFloat(raTakeProfit) || 0,
-      stopLoss: parseFloat(raStopLoss) || 0,
+      accountTakeProfit: parseFloat(raAccountTakeProfit) || 0,
+      accountStopLoss: parseFloat(raAccountStopLoss) || 0,
     });
     toast.info(localize('Robot started'), {
       description:
@@ -917,19 +929,43 @@ export function MinervaView({
             </p>
           </div>
 
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Added to the Account Take Profit threshold after every Minerva win.')}
+              >
+                <Localize i18n_default_text="TP Increment" />
+              </Label>
+              <Input value={raTpIncrement} onChange={(e) => setRaTpIncrement(e.target.value)} labelRight="USD" />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Cooldown" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={raCooldownSeconds}
+                onChange={(e) => setRaCooldownSeconds(e.target.value)}
+                labelRight={localize('sec')}
+              />
+            </div>
+          </div>
+
           <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
-                  'Once total profit across the whole run reaches this amount, Minerva stops. 0 = off.'
+                  'Once a signal fires, Minerva keeps trading that side until this run\'s profit reaches this amount, then goes back to watching. 0 = off.'
                 )}
               >
-                <Localize i18n_default_text="Take Profit" />
+                <Localize i18n_default_text="Take Profit (per run)" />
               </Label>
               <Input
-                value={raTakeProfit}
-                onChange={(e) => setRaTakeProfit(e.target.value)}
+                value={raAccountTakeProfit}
+                onChange={(e) => setRaAccountTakeProfit(e.target.value)}
                 labelRight="USD"
               />
             </div>
@@ -937,20 +973,20 @@ export function MinervaView({
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
-                  'Once total loss across the whole run reaches this amount, Minerva stops. 0 = off.'
+                  'Once a signal fires, Minerva keeps trading that side until this run\'s loss reaches this amount, then goes back to watching. 0 = off.'
                 )}
               >
-                <Localize i18n_default_text="Stop Loss" />
+                <Localize i18n_default_text="Stop Loss (per run)" />
               </Label>
               <Input
-                value={raStopLoss}
-                onChange={(e) => setRaStopLoss(e.target.value)}
+                value={raAccountStopLoss}
+                onChange={(e) => setRaAccountStopLoss(e.target.value)}
                 labelRight="USD"
               />
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Minerva's own martingale on losses) until it wins, then Minerva waits for the next signal. Take Profit and Stop Loss track total profit/loss across every run and stop Minerva outright once hit." />
+            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Minerva's own martingale on losses) until its Take Profit or Stop Loss is hit, then Minerva waits for the next signal." />
           </p>
 
           {(raBot.running || raBot.digitRecord.length > 0) && (
