@@ -19,24 +19,27 @@ import { getLastDigit } from '@/lib/digit-stats';
  *
  * Once a signal fires, Ra doesn't place a single trade and go back to
  * watching — it opens a "burst": it keeps repeating the same trade
- * (side/barrier fixed for the whole burst, stake still following Ra's own
- * martingale on losses) back-to-back as each one settles, accumulating a
- * burst-local P/L. The burst ends the moment that burst P/L reaches the
- * configured Account Take Profit or Account Stop Loss, at which point Ra
- * drops back to `idle` and resumes watching the digit stream for a brand
- * new arm/confirm sequence to open the next burst. The bot itself (`enabled`)
- * is unaffected by a burst ending — only an explicit stop(), or the
- * session-level accountTakeProfit/accountStopLoss being left at 0 forever
- * (which just means a burst never self-ends), changes that.
+ * (side/barrier fixed for the whole burst, stake following Ra's own
+ * martingale on losses) back-to-back as each one settles. A loss keeps the
+ * burst going (re-firing the same side at the bumped-up stake); a win ends
+ * the burst there and then, dropping back to `idle` to resume watching the
+ * digit stream for a brand new arm/confirm sequence to open the next burst.
+ *
+ * Take Profit and Stop Loss are plain, whole-run thresholds checked against
+ * the running total P/L (`pnl`, accumulated across every burst) after each
+ * settlement — the moment either is hit, the bot stops outright (same as
+ * calling stop() manually), rather than just ending the current burst.
  */
 
 export type RaSide = 'over4' | 'under5' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
 export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
-/** Why the most recently completed burst ended — for a transient UI note,
- *  distinct from RaStopReason which is about the whole bot stopping. */
-export type RaBurstOutcome = 'take-profit' | 'stop-loss' | 'error' | null;
+/** Why the most recently completed burst ended — for a transient UI note.
+ *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
+ *  whole bot (see RaStopReason) rather than just ending a burst, so this is
+ *  only ever a win or a failed trade. */
+export type RaBurstOutcome = 'won' | 'error' | null;
 
 /** One settled Ra trade, for the Logs tab — same shape/purpose as the
  *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired. */
@@ -63,22 +66,13 @@ export interface RaBotConfig {
   stakeMultiplier: number;
   /** Consecutive Ra losses before the multiplier starts being applied. 0 = multiply from the first loss. */
   martingaleStartAfter: number;
-  /**
-   * Native equivalent of the extension's "TP Increment": the extension bumped
-   * the site's own Target Profit field by this amount after every win. Here,
-   * the direct equivalent is bumping the Account Take Profit threshold below
-   * by this amount after every Ra win.
-   */
-  tpIncrement: number;
-  /** Minimum gap between trades, in seconds. */
-  cooldownSeconds: number;
   tradingMode: RaTradingMode;
-  /** Take-profit target for a single burst. 0 = off (burst only ends via
-   *  stop-loss or a failed trade). Resets fresh at the start of every burst. */
-  accountTakeProfit: number;
-  /** Stop-loss for a single burst (positive number; ends the burst once its
-   *  P/L <= -this). 0 = off. Resets fresh at the start of every burst. */
-  accountStopLoss: number;
+  /** Take-profit for the whole run: once total P/L (across every burst)
+   *  reaches this, the bot stops outright. 0 = off. */
+  takeProfit: number;
+  /** Stop-loss for the whole run (positive number; stops the bot once total
+   *  P/L <= -this). 0 = off. */
+  stopLoss: number;
 }
 
 interface UseRaBotParams {
@@ -143,19 +137,18 @@ export function useRaBot({
     initialStake: 1,
     stakeMultiplier: 1,
     martingaleStartAfter: 0,
-    tpIncrement: 0,
-    cooldownSeconds: 60,
     tradingMode: 'neutral',
-    accountTakeProfit: 0,
-    accountStopLoss: 0,
+    takeProfit: 0,
+    stopLoss: 0,
   });
-  // Runtime take-profit threshold for the *current burst* — reset to the
-  // configured Account Take Profit at the start of every burst, and climbs
-  // by tpIncrement after every win within that burst, mirroring the
-  // extension bumping the site's Target Profit field on each TP popup.
-  const takeProfitThresholdRef = useRef(Infinity);
+  // Running total P/L across the whole run — mirrors `pnl` state but usable
+  // synchronously inside the settlement effect, so the Take Profit/Stop
+  // Loss check below sees the value from the trade that just settled
+  // rather than a render behind.
+  const pnlRef = useRef(0);
   // Running P/L for the current burst — mirrors `burstPnl` state but usable
-  // synchronously inside the settlement effect.
+  // synchronously inside the settlement effect. Purely informational now
+  // (shown live in the status badge); it no longer decides anything.
   const burstPnlRef = useRef(0);
   // The trade Ra is currently looping within a burst — fixed for the whole
   // burst so each subsequent trade re-fires the same side/barrier without
@@ -172,7 +165,6 @@ export function useRaBot({
   const primaryStreakRef = useRef<{ side: RaSide; count: number }>({ side: null, count: 0 });
   const confirmCountRef = useRef(0);
   const lastProcessedEpochRef = useRef<number | null>(null);
-  const lastTradeTimeRef = useRef(0);
   const pendingContractIdRef = useRef<number | null>(null);
   // Ra's own consecutive-loss counter, driving its own stake martingale.
   // Entirely separate from the Martingale bot's loss tracking in
@@ -220,12 +212,11 @@ export function useRaBot({
   const start = useCallback(
     (cfg: RaBotConfig) => {
       cfgRef.current = cfg;
-      takeProfitThresholdRef.current = cfg.accountTakeProfit > 0 ? cfg.accountTakeProfit : Infinity;
+      pnlRef.current = 0;
       burstPnlRef.current = 0;
       activeTradeRef.current = null;
       resetTracking();
       lastProcessedEpochRef.current = null;
-      lastTradeTimeRef.current = 0;
       pendingContractIdRef.current = null;
       lossStreakRef.current = 0;
       lastFireKeyRef.current = null;
@@ -261,7 +252,7 @@ export function useRaBot({
   // Computes the current martingale stake from Ra's own loss streak, sets
   // the contract mode/barrier, and flips the phase to kick off the
   // proposal → buy flow. Shared between opening a fresh burst and looping
-  // the same trade again after a settlement that didn't hit TP/SL yet.
+  // the same trade again after a loss within it.
   const placeTrade = useCallback(
     (side: Exclude<RaSide, null>) => {
       const cfg = cfgRef.current;
@@ -285,7 +276,6 @@ export function useRaBot({
       setSelectedDigit(selectedDigit);
       setLastFired({ side, barrier });
 
-      lastTradeTimeRef.current = Date.now();
       sawProposalLoadingRef.current = false;
       setPhase('awaiting-proposal');
     },
@@ -348,51 +338,45 @@ export function useRaBot({
     setArmedSide(armedSideRef.current);
     setConfirmProgress(confirmCountRef.current);
 
-    // Confirmation complete — open a new burst (subject to Trading Mode and
-    // cooldown). This only *opens* the burst with one trade; further trades
-    // within the same burst are fired from the settlement effect below
-    // without re-checking the arm/confirm streaks. On an *actual* fire, the
-    // whole arm state is wiped — armedSide, confirmCount, AND the primary
-    // streak — same as the extension's resetArmState() right before
-    // triggerTrade(). That means the next signal (after this burst ends)
-    // needs a completely fresh N-digit primary streak plus its own M-digit
-    // confirmation, not just a fresh M. In Neutral mode, or while
-    // cooldown/an in-flight burst blocks firing, nothing is reset — the
-    // count just holds at the target ("ready and waiting") instead of
-    // silently zeroing out — it still only drops back to 0 if a genuine
-    // opposite-side digit interrupts it (handled above).
+    // Confirmation complete — open a new burst (subject to Trading Mode).
+    // This only *opens* the burst with one trade; further trades within the
+    // same burst are fired from the settlement effect below without
+    // re-checking the arm/confirm streaks. On an *actual* fire, the whole
+    // arm state is wiped — armedSide, confirmCount, AND the primary streak —
+    // same as the extension's resetArmState() right before triggerTrade().
+    // That means the next signal (after this burst ends) needs a completely
+    // fresh N-digit primary streak plus its own M-digit confirmation, not
+    // just a fresh M. In Neutral mode, or while an in-flight burst blocks
+    // firing, nothing is reset — the count just holds at the target ("ready
+    // and waiting") instead of silently zeroing out — it still only drops
+    // back to 0 if a genuine opposite-side digit interrupts it (handled
+    // above).
     if (armedSideRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
       const confirmedSide = armedSideRef.current;
 
       if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
-        const now = Date.now();
-        const cooldownMs = cfg.cooldownSeconds * 1000;
-        if (now - lastTradeTimeRef.current >= cooldownMs) {
-          const tradeSide: Exclude<RaSide, null> =
-            cfg.tradingMode === 'trend'
-              ? (confirmedSide as Exclude<RaSide, null>)
-              : confirmedSide === 'over4'
-                ? 'under5'
-                : 'over4';
+        const tradeSide: Exclude<RaSide, null> =
+          cfg.tradingMode === 'trend'
+            ? (confirmedSide as Exclude<RaSide, null>)
+            : confirmedSide === 'over4'
+              ? 'under5'
+              : 'over4';
 
-          // Open a fresh burst: reset burst P/L and the TP threshold back
-          // to the configured base (tpIncrement may have raised it during a
-          // previous burst) before firing the opening trade.
-          burstPnlRef.current = 0;
-          setBurstPnl(0);
-          takeProfitThresholdRef.current = cfg.accountTakeProfit > 0 ? cfg.accountTakeProfit : Infinity;
-          setBurstActive(true);
-          setLastBurstOutcome(null);
-          placeTrade(tradeSide);
+        // Open a fresh burst: reset this burst's own running P/L display
+        // before firing the opening trade.
+        burstPnlRef.current = 0;
+        setBurstPnl(0);
+        setBurstActive(true);
+        setLastBurstOutcome(null);
+        placeTrade(tradeSide);
 
-          // Full reset — mirrors the extension's resetArmState(): armed
-          // side and primary streak are cleared too, not just confirmCount.
-          armedSideRef.current = null;
-          primaryStreakRef.current = { side: null, count: 0 };
-          confirmCountRef.current = 0;
-          setArmedSide(null);
-          setConfirmProgress(0);
-        }
+        // Full reset — mirrors the extension's resetArmState(): armed
+        // side and primary streak are cleared too, not just confirmCount.
+        armedSideRef.current = null;
+        primaryStreakRef.current = { side: null, count: 0 };
+        confirmCountRef.current = 0;
+        setArmedSide(null);
+        setConfirmProgress(0);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,50 +455,51 @@ export function useRaBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
 
-    // Overall P/L across the whole run (every burst) — never resets itself.
-    setPnl((prevPnl) => prevPnl + profit);
+    // Overall P/L across the whole run — the thing checked against the
+    // whole-run Take Profit/Stop Loss below. Tracked in a ref too so this
+    // effect can read the up-to-date total synchronously, rather than
+    // waiting a render behind the setPnl state update.
+    const nextPnl = pnlRef.current + profit;
+    pnlRef.current = nextPnl;
+    setPnl(nextPnl);
 
-    // This burst's own P/L — the thing actually checked against the
-    // burst-local TP/SL to decide whether to keep looping.
+    // This burst's own running P/L — purely informational now, shown live
+    // in the status badge; it no longer decides anything.
     const nextBurstPnl = burstPnlRef.current + profit;
     burstPnlRef.current = nextBurstPnl;
     setBurstPnl(nextBurstPnl);
 
-    // Check TP/SL against the CURRENT threshold before any tpIncrement bump.
-    // Bumping first (the old order) meant a win that finally reached the
-    // configured Take Profit would raise the ceiling before the comparison
-    // ever ran, so the run sailed straight past the target chasing a bar
-    // that kept sliding away — exactly the "$5 TP, stopped past $6" bug.
-    const hitTakeProfit = nextBurstPnl >= takeProfitThresholdRef.current;
-    const hitStopLoss = cfgRef.current.accountStopLoss > 0 && nextBurstPnl <= -cfgRef.current.accountStopLoss;
+    const cfg = cfgRef.current;
+    const hitTakeProfit = cfg.takeProfit > 0 && nextPnl >= cfg.takeProfit;
+    const hitStopLoss = cfg.stopLoss > 0 && nextPnl <= -cfg.stopLoss;
 
     if (hitTakeProfit || hitStopLoss) {
-      // Burst complete — stop looping and go back to watching the digit
-      // stream for the next arm/confirm signal. The bot itself keeps
-      // running; only an explicit stop() disables it.
+      // Whole-run target hit — stop the bot outright (same as calling
+      // stop() manually), rather than just ending this burst.
+      stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
+      return;
+    }
+
+    if (won) {
+      // Burst won — go back to watching the digit stream for the next
+      // arm/confirm signal. The bot itself keeps running; only an explicit
+      // stop() (manual, or Take Profit/Stop Loss above) disables it.
       activeTradeRef.current = null;
       setBurstActive(false);
-      setLastBurstOutcome(hitTakeProfit ? 'take-profit' : 'stop-loss');
+      setLastBurstOutcome('won');
       setPhase('idle');
       return;
     }
 
-    // Neither threshold hit yet — keep the burst going: re-fire the exact
-    // same side/barrier immediately (no cooldown, no re-arming needed).
-    // The tpIncrement bump for a win belongs here, not before the check
-    // above — it's supposed to raise the bar for the *next* trade in an
-    // ongoing burst, not the one that just settled.
-    if (won && cfgRef.current.tpIncrement > 0 && takeProfitThresholdRef.current !== Infinity) {
-      takeProfitThresholdRef.current += cfgRef.current.tpIncrement;
-    }
-
+    // Lost — keep the burst going: re-fire the exact same side/barrier
+    // immediately at the bumped-up martingale stake.
     const active = activeTradeRef.current;
     if (active) {
       placeTrade(active.side as Exclude<RaSide, null>);
     } else {
       setPhase('idle');
     }
-  }, [phase, openPositions, placeTrade, pushLog]);
+  }, [phase, openPositions, placeTrade, pushLog, stop]);
 
   return {
     enabled,
