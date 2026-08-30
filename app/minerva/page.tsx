@@ -6,6 +6,7 @@
  * unlike Operations. Manual trading is also available alongside it.
  */
 
+import { useState } from 'react';
 import { useDigitsTrading } from '../../hooks/use-digits-trading';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useLogoSrc } from '@/components/custom/logo-src-provider';
@@ -13,8 +14,10 @@ import { Header } from '@/components/custom/header';
 import { ThemeToggle } from '@/components/custom/theme-toggle';
 import { Footer } from '@/components/custom/footer';
 import { MinervaView } from '@/components/custom/minerva-view';
+import { MinervaSplash } from '@/components/custom/minerva-splash';
 
 export default function MinervaPage() {
+  const [showIntro, setShowIntro] = useState(true);
   const logoSrc = useLogoSrc();
   const { ws, isConnected, isExhausted, auth } = useDerivWSContext();
   const { authState, accounts, activeAccount, login, signUp, logout, switchAccount } = auth;
@@ -33,7 +36,9 @@ export default function MinervaPage() {
       : null;
 
   return (
-    <main className="relative flex flex-col bg-background/30 max-lg:h-dvh max-lg:overflow-y-auto lg:min-h-dvh">
+    <>
+      {showIntro && <MinervaSplash onFinished={() => setShowIntro(false)} />}
+      <main className="relative flex flex-col bg-background/30 max-lg:h-dvh max-lg:overflow-y-auto lg:min-h-dvh">
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 -z-10 bg-cover bg-center"
@@ -98,6 +103,7 @@ export default function MinervaPage() {
       <div className="fixed bottom-0 left-0 right-0 py-2 text-center bg-background/80 backdrop-blur-sm">
         <Footer />
       </div>
-    </main>
+      </main>
+    </>
   );
 }
