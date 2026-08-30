@@ -819,7 +819,7 @@ export function MinervaView({
             />
           </div>
 
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Duration" />
             </Label>
@@ -837,13 +837,13 @@ export function MinervaView({
           </div>
 
                     <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Stake" />
               </Label>
               <Input value={raInitialStake} onChange={(e) => setRaInitialStake(e.target.value)} />
             </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Stake Multiplier" />
               </Label>
@@ -851,7 +851,7 @@ export function MinervaView({
             </div>
           </div>
 
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label
               className="text-xs font-semibold text-foreground/90"
               title={localize(
@@ -867,7 +867,7 @@ export function MinervaView({
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize('N consecutive same-side digits (over4 / under5) required to arm a run before confirmation starts.')}
@@ -882,7 +882,7 @@ export function MinervaView({
                 onChange={(e) => setRaStreakCount(e.target.value)}
               />
             </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize('M more consecutive same-side digits, uninterrupted, required after arming before the trade fires.')}
@@ -899,7 +899,7 @@ export function MinervaView({
             </div>
           </div>
 
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Trading Mode" />
             </Label>
@@ -935,7 +935,7 @@ export function MinervaView({
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize('Added to the Account Take Profit threshold after every Minerva win.')}
@@ -944,7 +944,7 @@ export function MinervaView({
               </Label>
               <Input value={raTpIncrement} onChange={(e) => setRaTpIncrement(e.target.value)} labelRight="USD" />
             </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label className="text-xs font-semibold text-foreground/90">
                 <Localize i18n_default_text="Cooldown" />
               </Label>
@@ -959,7 +959,7 @@ export function MinervaView({
           </div>
 
           <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
@@ -974,7 +974,7 @@ export function MinervaView({
                 labelRight="USD"
               />
             </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
