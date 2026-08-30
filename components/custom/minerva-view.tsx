@@ -415,7 +415,7 @@ function useRobotPanelHover() {
       className:
         'relative transition-[transform,opacity] duration-300 ease-out will-change-transform',
       overlayClassName:
-        'pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ease-out shadow-[0_14px_32px_-12px_rgba(0,0,0,0.35),0_0_0_1px_rgba(59,130,246,0.55),0_0_26px_4px_rgba(59,130,246,0.45),0_0_56px_14px_rgba(59,130,246,0.22)]' +
+        'pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ease-out shadow-[0_14px_32px_-12px_rgba(0,0,0,0.35),0_0_0_1px_rgba(217,160,90,0.55),0_0_26px_4px_rgba(217,160,90,0.45),0_0_56px_14px_rgba(217,160,90,0.22)]' +
         (isHovered ? ' opacity-100' : ' opacity-0'),
     };
   }
