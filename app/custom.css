@@ -418,6 +418,42 @@
     radial-gradient(ellipse at 50% -10%, rgb(70 52 34 / 0.5), transparent 60%);
 }
 
+/* Bronze panel glow: overrides the shared blue .panel-glow breathing border
+   for Minerva panels only, so the settings/analysis/manual cards pulse in
+   the same warm bronze tone as the gilded frame and engraved title instead
+   of the app-wide blue accent. Scoped to .minerva-theme so other pages
+   (Digits, standalone Robot) keep the original blue glow. */
+@keyframes minerva-panel-glow-pulse {
+  0%,
+  100% {
+    border-color: rgb(217 160 90 / 0.35);
+    box-shadow:
+      0 0 0 1px rgb(217 160 90 / 0.16),
+      0 0 12px 1px rgb(217 160 90 / 0.22),
+      0 0 28px 6px rgb(217 160 90 / 0.1);
+  }
+  50% {
+    border-color: rgb(217 160 90 / 0.55);
+    box-shadow:
+      0 0 0 1px rgb(217 160 90 / 0.26),
+      0 0 16px 2px rgb(217 160 90 / 0.32),
+      0 0 34px 8px rgb(217 160 90 / 0.16);
+  }
+}
+.minerva-theme .panel-glow {
+  border-color: rgb(217 160 90 / 0.35);
+  box-shadow:
+    0 0 0 1px rgb(217 160 90 / 0.16),
+    0 0 12px 1px rgb(217 160 90 / 0.22),
+    0 0 28px 6px rgb(217 160 90 / 0.1);
+  animation: minerva-panel-glow-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .minerva-theme .panel-glow {
+    animation: none;
+  }
+}
+
 /* Robot settings panel: the Minerva emblem statue faded in as a watermark
    behind the form, echoing the splash screen's emblem. */
 .minerva-settings-panel {
