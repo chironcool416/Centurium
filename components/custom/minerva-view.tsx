@@ -18,15 +18,18 @@ import {
 } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SymbolSelector } from '@/components/custom/symbol-selector';
-import { TradeControls, getContractModeOptions } from '@/components/trade-controls';
+import { TradeControls } from '@/components/trade-controls';
 import { PositionsTable } from '@/components/custom/positions-table';
-import { VictoryDialog } from '@/components/custom/victory-dialog';
-import { DefeatDialog } from '@/components/custom/defeat-dialog';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
-import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
-import { useRaBot, type RaPhase, type RaTradingMode, type RaSide, type RaLogEntry } from '@/hooks/use-ra-bot';
+import {
+  useMinervaBot,
+  type MinervaPhase,
+  type MinervaTradingMode,
+  type MinervaSide,
+  type MinervaLogEntry,
+} from '@/hooks/use-minerva-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import type {
   ActiveSymbol,
@@ -122,11 +125,6 @@ const RECENT_DIGITS_SHOWN = 26;
 const ROBOT_SETTINGS_STORAGE_KEY = 'centurium:robot-settings';
 
 interface SavedRobotSettings {
-  multiplier: string;
-  martingaleAfterLosses: string;
-  initialAmount: string;
-  targetProfit: string;
-  stopLossLosses: string;
   duration: number;
   raStreakCount: string;
   raConfirmationStreak: string;
@@ -135,7 +133,7 @@ interface SavedRobotSettings {
   raMartingaleAfterLosses: string;
   raTpIncrement: string;
   raCooldownSeconds: string;
-  raTradingMode: RaTradingMode;
+  raTradingMode: MinervaTradingMode;
   raAccountTakeProfit: string;
   raAccountStopLoss: string;
 }
@@ -297,35 +295,15 @@ function TickSparkline({ prices }: { prices: number[] }) {
   );
 }
 
-function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): string {
-  switch (phase) {
-    case 'idle':
-      return localize('Not running');
-    case 'awaiting-proposal':
-    case 'awaiting-buy':
-      return localize('Placing trade…');
-    case 'awaiting-settlement':
-      return localize('Trade running…');
-    case 'stopped-target':
-      return localize('Stopped — target profit reached');
-    case 'stopped-loss':
-      return localize('Stopped — stop-loss reached');
-    case 'stopped-error':
-      return localize('Stopped — trade failed');
-    default:
-      return localize('Not running');
-  }
-}
-
-function raSideLabel(side: RaSide, localize: (t: string) => string): string {
+function raSideLabel(side: MinervaSide, localize: (t: string) => string): string {
   if (side === 'over4') return localize('Over 4');
   if (side === 'under5') return localize('Under 5');
   return '';
 }
 
 function getRaStatusLabel(
-  phase: RaPhase,
-  armedSide: RaSide,
+  phase: MinervaPhase,
+  armedSide: MinervaSide,
   confirmProgress: number,
   confirmationStreak: string,
   localize: (t: string) => string,
@@ -590,7 +568,6 @@ export function MinervaView({
   const { localize } = useAppTranslations();
   const digitTradeTypeOptions = getDigitTradeTypeOptions(localize);
   const digitContractLabels = getDigitContractLabels(localize);
-  const contractModeOptions = getContractModeOptions(localize)[tradeType];
 
   const getPanelProps = useRobotPanelHover();
   const settingsPanel = getPanelProps('settings');
@@ -610,16 +587,6 @@ export function MinervaView({
   // buffer that would start empty and duplicate/lag the real data.
   const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
 
-  const [multiplier, setMultiplier] = useState('2.5');
-  const [martingaleAfterLosses, setMartingaleAfterLosses] = useState('0');
-  const [initialAmount, setInitialAmount] = useState('1');
-  const [targetProfit, setTargetProfit] = useState('5');
-  const [stopLossLosses, setStopLossLosses] = useState('4');
-
-  // --- Ra mode: which automated strategy the left panel runs. Ra's stake
-  // fields are entirely separate from the Martingale bot's (multiplier,
-  // martingaleAfterLosses, initialAmount above) — Ra never reads those.
-  const [botMode, setBotMode] = useState<'martingale' | 'ra'>('martingale');
   const [raStreakCount, setRaStreakCount] = useState('5');
   const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
   const [raInitialStake, setRaInitialStake] = useState('1');
@@ -627,7 +594,7 @@ export function MinervaView({
   const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
   const [raTpIncrement, setRaTpIncrement] = useState('0');
   const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
-  const [raTradingMode, setRaTradingMode] = useState<RaTradingMode>('neutral');
+  const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
   const [raAccountTakeProfit, setRaAccountTakeProfit] = useState('0');
   const [raAccountStopLoss, setRaAccountStopLoss] = useState('0');
 
@@ -637,11 +604,6 @@ export function MinervaView({
       const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw) as Partial<SavedRobotSettings>;
-      if (typeof saved.multiplier === 'string') setMultiplier(saved.multiplier);
-      if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
-      if (typeof saved.initialAmount === 'string') setInitialAmount(saved.initialAmount);
-      if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
-      if (typeof saved.stopLossLosses === 'string') setStopLossLosses(saved.stopLossLosses);
       if (typeof saved.duration === 'number') setDuration(saved.duration);
       if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
       if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
@@ -662,11 +624,6 @@ export function MinervaView({
   const handleSaveSettings = () => {
     try {
       const payload: SavedRobotSettings = {
-        multiplier,
-        martingaleAfterLosses,
-        initialAmount,
-        targetProfit,
-        stopLossLosses,
         duration,
         raStreakCount,
         raConfirmationStreak,
@@ -711,19 +668,7 @@ export function MinervaView({
     [currentTick, pipSize]
   );
 
-  const bot = useAutoBot({
-    pipSize,
-    setStake,
-    proposal,
-    isProposalLoading,
-    buyContract,
-    buyResult,
-    buyError,
-    clearBuyResult,
-    openPositions,
-  });
-
-  const raBot = useRaBot({
+  const raBot = useMinervaBot({
     currentTick,
     pipSize,
     setStake,
@@ -738,27 +683,9 @@ export function MinervaView({
     openPositions,
   });
 
-  // Whichever strategy is currently selected — used to gate Manual mode and
-  // to decide what the Start/Stop button and header status line show.
-  const activeBotRunning = botMode === 'ra' ? raBot.running : bot.running;
-
-  // Celebration modal — opens the moment the bot's phase flips to
-  // `stopped-target`, independent of that phase so the user can dismiss it
-  // (and start a new run) without the phase itself changing.
-  const [victoryOpen, setVictoryOpen] = useState(false);
-  useEffect(() => {
-    if (bot.phase === 'stopped-target') {
-      setVictoryOpen(true);
-    }
-  }, [bot.phase]);
-
-  // Same pattern as the victory modal above, but for the stop-loss phase.
-  const [defeatOpen, setDefeatOpen] = useState(false);
-  useEffect(() => {
-    if (bot.phase === 'stopped-loss') {
-      setDefeatOpen(true);
-    }
-  }, [bot.phase]);
+  // Used to gate Manual mode and to decide what the Start/Stop button and
+  // header status line show.
+  const activeBotRunning = raBot.running;
 
   const handleRaStart = () => {
     if (raBot.running) {
@@ -801,57 +728,9 @@ export function MinervaView({
     });
   };
 
-  const handleStart = () => {
-    if (botMode === 'ra') {
-      handleRaStart();
-      return;
-    }
-    if (bot.running) {
-      bot.stop();
-      toast.info(localize('Robot stopped'));
-      return;
-    }
-    const initial = parseFloat(initialAmount);
-    if (!initial || initial <= 0) {
-      toast.error(localize('Enter a valid initial stake first.'));
-      return;
-    }
-    const mult = parseFloat(multiplier) || 1;
-    const martingaleStartAfter = Math.max(0, parseInt(martingaleAfterLosses, 10) || 0);
-    const target = parseFloat(targetProfit);
-    const lossCount = parseInt(stopLossLosses, 10);
-    if (!lossCount || lossCount <= 0) {
-      toast.error(localize('Enter a valid number of losses first.'));
-      return;
-    }
-    bot.start({
-      initialStake: initial,
-      multiplier: mult,
-      martingaleStartAfter,
-      targetProfit: target > 0 ? target : Infinity,
-      stopLossLossCount: lossCount,
-      stopLossAmount: Infinity,
-    });
-    toast.info(localize('Robot started'), {
-      description:
-        martingaleStartAfter > 0
-          ? localize('Trading at the initial stake until a loss streak triggers the martingale.')
-          : localize('Placing trades using the settings on the left.'),
-    });
-  };
+  const handleStart = handleRaStart;
 
   return (
-    <>
-    <VictoryDialog
-      open={victoryOpen}
-      onOpenChange={setVictoryOpen}
-      onContinue={() => setVictoryOpen(false)}
-    />
-    <DefeatDialog
-      open={defeatOpen}
-      onOpenChange={setDefeatOpen}
-      onContinue={() => setDefeatOpen(false)}
-    />
     <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
           and mutually exclusive with the Manual panel on the far right.
@@ -892,47 +771,34 @@ export function MinervaView({
           </p>
           <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
             <span className={cn('text-xs font-bold pr-2 min-w-0', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
-              {botMode === 'ra'
-                ? getRaStatusLabel(
-                    raBot.phase,
-                    raBot.armedSide,
-                    raBot.confirmProgress,
-                    raConfirmationStreak,
-                    localize,
-                    raBot.burstActive,
-                    raBot.burstPnl
-                  )
-                : getBotStatusLabel(bot.phase, localize)}
+              {getRaStatusLabel(
+                raBot.phase,
+                raBot.armedSide,
+                raBot.confirmProgress,
+                raConfirmationStreak,
+                localize,
+                raBot.burstActive,
+                raBot.burstPnl
+              )}
             </span>
             <div className="flex items-center gap-1.5">
               <span
                 className={cn(
                   'text-sm font-mono font-bold tabular-nums',
-                  (botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  raBot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
                 )}
               >
-                {(botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? '+' : ''}
-                {(botMode === 'ra' ? raBot.pnl : bot.pnl).toFixed(2)}
+                {raBot.pnl >= 0 ? '+' : ''}
+                {raBot.pnl.toFixed(2)}
               </span>
-              {botMode === 'martingale' && (
-                <button
-                  type="button"
-                  onClick={bot.resetPnl}
-                  title={localize('Reset profit/loss to 0')}
-                  className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
-                >
-                  <Localize i18n_default_text="Reset" />
-                </button>
-              )}
             </div>
           </div>
-          {botMode === 'ra' && !raBot.running && getRaStoppedLabel(raBot.stoppedReason, localize) && (
+          {!raBot.running && getRaStoppedLabel(raBot.stoppedReason, localize) && (
             <p className="text-[11px] text-muted-foreground px-0.5">
               {getRaStoppedLabel(raBot.stoppedReason, localize)}
             </p>
           )}
-          {botMode === 'ra' &&
-            raBot.running &&
+          {raBot.running &&
             !raBot.burstActive &&
             getRaLastBurstLabel(raBot.lastBurstOutcome, localize) && (
               <p className="text-[11px] text-muted-foreground px-0.5">
@@ -941,35 +807,6 @@ export function MinervaView({
             )}
         </CardHeader>
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-            <Label className="text-xs font-semibold text-foreground/90">
-              <Localize i18n_default_text="Bot Mode" />
-            </Label>
-            <ToggleGroup
-              type="single"
-              value={botMode}
-              onValueChange={(v) => {
-                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra');
-              }}
-              className="w-full gap-0 rounded-full bg-muted p-1"
-            >
-              <ToggleGroupItem
-                value="martingale"
-                disabled={activeBotRunning}
-                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
-              >
-                <Localize i18n_default_text="Martingale" />
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="ra"
-                disabled={activeBotRunning}
-                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
-              >
-                <Localize i18n_default_text="Minerva" />
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
           <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
@@ -982,147 +819,6 @@ export function MinervaView({
             />
           </div>
 
-          {botMode === 'martingale' && (
-          <>
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-            <Label className="text-xs font-semibold text-foreground/90">
-              <Localize i18n_default_text="Trade Type" />
-            </Label>
-            <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {digitTradeTypeOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-            <Label className="text-xs font-semibold text-foreground/90">
-              <Localize i18n_default_text="Trade Function" />
-            </Label>
-            <ToggleGroup
-              type="single"
-              value={contractMode}
-              onValueChange={(value) => {
-                if (value) setContractMode(value as ContractMode);
-              }}
-              className="w-full gap-0 rounded-full bg-muted p-1"
-            >
-              {contractModeOptions.map((opt) => (
-                <ToggleGroupItem
-                  key={opt.value}
-                  value={opt.value}
-                  className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
-                >
-                  {opt.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-
-          {tradeType !== 'even-odd' && (
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Prediction" />
-              </Label>
-              <Select
-                value={String(selectedDigit)}
-                onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: 10 }, (_, d) => (
-                    <SelectItem key={d} value={String(d)}>
-                      {d}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Duration" />
-              </Label>
-              <Input
-                type="number"
-                value={duration}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  if (!isNaN(val)) setDuration(val);
-                }}
-                min={durationLimits.min}
-                max={durationLimits.max}
-                labelRight={localize('Ticks')}
-              />
-            </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Multiplier" />
-              </Label>
-              <Input value={multiplier} onChange={(e) => setMultiplier(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-            <Label
-              className="text-xs font-semibold text-foreground/90"
-              title={localize(
-                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
-              )}
-            >
-              <Localize i18n_default_text="Martingale after N losses" />
-            </Label>
-            <Input
-              value={martingaleAfterLosses}
-              onChange={(e) => setMartingaleAfterLosses(e.target.value)}
-            />
-          </div>
-
-          <div className="border-t border-border pt-2 grid grid-cols-3 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Initial" />
-              </Label>
-              <Input value={initialAmount} onChange={(e) => setInitialAmount(e.target.value)} />
-            </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Target profit" />
-              </Label>
-              <Input value={targetProfit} onChange={(e) => setTargetProfit(e.target.value)} />
-            </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
-              <Label
-                className="text-xs font-semibold text-foreground/90"
-                title={localize('Stop after this many losses in a row')}
-              >
-                <Localize i18n_default_text="Stop loss" />
-              </Label>
-              <Input
-                type="number"
-                min={1}
-                value={stopLossLosses}
-                onChange={(e) => setStopLossLosses(e.target.value)}
-                labelRight={localize('losses')}
-              />
-            </div>
-          </div>
-          </>
-          )}
-
-          {botMode === 'ra' && (
-          <>
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Duration" />
@@ -1211,7 +907,7 @@ export function MinervaView({
               type="single"
               value={raTradingMode}
               onValueChange={(v) => {
-                if (v) setRaTradingMode(v as RaTradingMode);
+                if (v) setRaTradingMode(v as MinervaTradingMode);
               }}
               className="w-full gap-0 rounded-full bg-muted p-1"
             >
@@ -1313,8 +1009,6 @@ export function MinervaView({
               </div>
               <RaDigitRecord digits={raBot.digitRecord} />
             </div>
-          )}
-          </>
           )}
           </fieldset>
 
@@ -1473,14 +1167,14 @@ export function MinervaView({
             </>
           )}
 
-          {activeTab === 'logs' && botMode === 'ra' && (
+          {activeTab === 'logs' && (
             <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
               {raBot.log.length === 0 && (
                 <div className="py-10 text-center text-sm text-muted-foreground">
                   <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
                 </div>
               )}
-              {[...raBot.log].reverse().map((entry: RaLogEntry) => (
+              {[...raBot.log].reverse().map((entry: MinervaLogEntry) => (
                 <div
                   key={entry.id}
                   className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
@@ -1506,43 +1200,6 @@ export function MinervaView({
                     <span className="tabular-nums text-foreground/70">
                       {localize('Stake')} {entry.stake.toFixed(2)}
                     </span>
-                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                      {entry.won ? localize('Win') : localize('Loss')}
-                    </span>
-                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                      {entry.profit >= 0 ? '+' : ''}
-                      {entry.profit.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {activeTab === 'logs' && botMode === 'martingale' && (
-            <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
-              {bot.log.length === 0 && (
-                <div className="py-10 text-center text-sm text-muted-foreground">
-                  <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
-                </div>
-              )}
-              {[...bot.log].reverse().map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
-                      {localize('Real')}
-                    </span>
-                    <span className="text-foreground/80 font-medium">
-                      {new Date(entry.time).toLocaleTimeString()}
-                    </span>
-                    {entry.exitSpot !== null && (
-                      <span className="tabular-nums font-mono font-semibold text-foreground">{entry.exitSpot.toFixed(pipSize)}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
                     <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
                       {entry.won ? localize('Win') : localize('Loss')}
                     </span>
@@ -1594,7 +1251,48 @@ export function MinervaView({
               <Localize i18n_default_text="Manual trading is paused while the robot is running." />
             </p>
           )}
-          <fieldset disabled={activeBotRunning} className="border-0 p-0 m-0 min-w-0">
+          <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Trade Type" />
+              </Label>
+              <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {digitTradeTypeOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {tradeType !== 'even-odd' && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Prediction" />
+                </Label>
+                <Select
+                  value={String(selectedDigit)}
+                  onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 10 }, (_, d) => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <TradeControls
               tradeType={tradeType}
               contractMode={contractMode}
@@ -1620,6 +1318,5 @@ export function MinervaView({
       </Card>
       </CollapsibleSidePanel>
     </div>
-    </>
   );
 }
