@@ -133,11 +133,9 @@ interface SavedRobotSettings {
   raInitialStake: string;
   raStakeMultiplier: string;
   raMartingaleAfterLosses: string;
-  raTpIncrement: string;
-  raCooldownSeconds: string;
   raTradingMode: RaTradingMode;
-  raAccountTakeProfit: string;
-  raAccountStopLoss: string;
+  raTakeProfit: string;
+  raStopLoss: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -371,14 +369,12 @@ function getRaStoppedLabel(
 /** Transient note shown while Ra is still running but idle between bursts,
  *  explaining how the last burst ended before a new signal opens the next one. */
 function getRaLastBurstLabel(
-  outcome: 'take-profit' | 'stop-loss' | 'error' | null,
+  outcome: 'won' | 'error' | null,
   localize: (t: string) => string
 ): string | null {
   switch (outcome) {
-    case 'take-profit':
-      return localize('Last run hit its Take Profit — watching for the next signal.');
-    case 'stop-loss':
-      return localize('Last run hit its Stop Loss — watching for the next signal.');
+    case 'won':
+      return localize('Last run finished in profit — watching for the next signal.');
     case 'error':
       return localize('Last trade failed — watching for the next signal.');
     default:
@@ -625,11 +621,9 @@ export function TradeRobotView({
   const [raInitialStake, setRaInitialStake] = useState('1');
   const [raStakeMultiplier, setRaStakeMultiplier] = useState('2.5');
   const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
-  const [raTpIncrement, setRaTpIncrement] = useState('0');
-  const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
   const [raTradingMode, setRaTradingMode] = useState<RaTradingMode>('neutral');
-  const [raAccountTakeProfit, setRaAccountTakeProfit] = useState('0');
-  const [raAccountStopLoss, setRaAccountStopLoss] = useState('0');
+  const [raTakeProfit, setRaTakeProfit] = useState('0');
+  const [raStopLoss, setRaStopLoss] = useState('0');
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -648,11 +642,9 @@ export function TradeRobotView({
       if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
       if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
       if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
-      if (typeof saved.raTpIncrement === 'string') setRaTpIncrement(saved.raTpIncrement);
-      if (typeof saved.raCooldownSeconds === 'string') setRaCooldownSeconds(saved.raCooldownSeconds);
       if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
-      if (typeof saved.raAccountTakeProfit === 'string') setRaAccountTakeProfit(saved.raAccountTakeProfit);
-      if (typeof saved.raAccountStopLoss === 'string') setRaAccountStopLoss(saved.raAccountStopLoss);
+      if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
+      if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -673,11 +665,9 @@ export function TradeRobotView({
         raInitialStake,
         raStakeMultiplier,
         raMartingaleAfterLosses,
-        raTpIncrement,
-        raCooldownSeconds,
         raTradingMode,
-        raAccountTakeProfit,
-        raAccountStopLoss,
+        raTakeProfit,
+        raStopLoss,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -787,11 +777,9 @@ export function TradeRobotView({
       initialStake: raStake,
       stakeMultiplier: parseFloat(raStakeMultiplier) || 1,
       martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
-      tpIncrement: parseFloat(raTpIncrement) || 0,
-      cooldownSeconds: Math.max(0, parseInt(raCooldownSeconds, 10) || 0),
       tradingMode: raTradingMode,
-      accountTakeProfit: parseFloat(raAccountTakeProfit) || 0,
-      accountStopLoss: parseFloat(raAccountStopLoss) || 0,
+      takeProfit: parseFloat(raTakeProfit) || 0,
+      stopLoss: parseFloat(raStopLoss) || 0,
     });
     toast.info(localize('Robot started'), {
       description:
@@ -1238,43 +1226,19 @@ export function TradeRobotView({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-              <Label
-                className="text-xs font-semibold text-foreground/90"
-                title={localize('Added to the Account Take Profit threshold after every Ra win.')}
-              >
-                <Localize i18n_default_text="TP Increment" />
-              </Label>
-              <Input value={raTpIncrement} onChange={(e) => setRaTpIncrement(e.target.value)} labelRight="USD" />
-            </div>
-            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-              <Label className="text-xs font-semibold text-foreground/90">
-                <Localize i18n_default_text="Cooldown" />
-              </Label>
-              <Input
-                type="number"
-                min={0}
-                value={raCooldownSeconds}
-                onChange={(e) => setRaCooldownSeconds(e.target.value)}
-                labelRight={localize('sec')}
-              />
-            </div>
-          </div>
-
           <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
-                  'Once a signal fires, Ra keeps trading that side until this run\'s profit reaches this amount, then goes back to watching. 0 = off.'
+                  'Once total profit across the whole run reaches this amount, Ra stops. 0 = off.'
                 )}
               >
-                <Localize i18n_default_text="Take Profit (per run)" />
+                <Localize i18n_default_text="Take Profit" />
               </Label>
               <Input
-                value={raAccountTakeProfit}
-                onChange={(e) => setRaAccountTakeProfit(e.target.value)}
+                value={raTakeProfit}
+                onChange={(e) => setRaTakeProfit(e.target.value)}
                 labelRight="USD"
               />
             </div>
@@ -1282,20 +1246,20 @@ export function TradeRobotView({
               <Label
                 className="text-xs font-semibold text-foreground/90"
                 title={localize(
-                  'Once a signal fires, Ra keeps trading that side until this run\'s loss reaches this amount, then goes back to watching. 0 = off.'
+                  'Once total loss across the whole run reaches this amount, Ra stops. 0 = off.'
                 )}
               >
-                <Localize i18n_default_text="Stop Loss (per run)" />
+                <Localize i18n_default_text="Stop Loss" />
               </Label>
               <Input
-                value={raAccountStopLoss}
-                onChange={(e) => setRaAccountStopLoss(e.target.value)}
+                value={raStopLoss}
+                onChange={(e) => setRaStopLoss(e.target.value)}
                 labelRight="USD"
               />
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Ra's own martingale on losses) until its Take Profit or Stop Loss is hit, then Ra waits for the next signal." />
+            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Ra's own martingale on losses) until it wins, then Ra waits for the next signal. Take Profit and Stop Loss track total profit/loss across every run and stop Ra outright once hit." />
           </p>
 
           {(raBot.running || raBot.digitRecord.length > 0) && (
