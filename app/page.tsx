@@ -80,6 +80,17 @@ export default function HomePage() {
   const robotCard = getHomeCardProps('robot');
   const minervaCard = getHomeCardProps('minerva');
 
+  // The intro splash sits on top of the page for ~10s before fading out, but
+  // these cards mount immediately underneath it. Without this gate, the
+  // slide-in animation plays out (and finishes) while hidden behind the
+  // splash, so nothing appears to move once it's actually visible. Instead,
+  // hold each card at its from-state (opacity 0) until the splash is gone,
+  // then switch to the animation so it starts the moment the user can see it.
+  const panelEntranceStyle = (delayMs: number): React.CSSProperties =>
+    showIntro
+      ? { opacity: 0 }
+      : { animation: `home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) ${delayMs}ms both` };
+
   return (
     <>
       {showIntro && <IntroSplash onFinished={() => setShowIntro(false)} />}
@@ -118,7 +129,7 @@ export default function HomePage() {
           </p>
 
           <div className="mt-10 grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 0ms both' }}>
+            <div style={panelEntranceStyle(0)}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
               style={digitsCard.style}
@@ -151,7 +162,7 @@ export default function HomePage() {
             </Card>
             </div>
 
-            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 130ms both' }}>
+            <div style={panelEntranceStyle(130)}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${robotCard.className}`}
               style={robotCard.style}
@@ -184,7 +195,7 @@ export default function HomePage() {
             </Card>
             </div>
 
-            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 260ms both' }}>
+            <div style={panelEntranceStyle(260)}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${minervaCard.className}`}
               style={minervaCard.style}
