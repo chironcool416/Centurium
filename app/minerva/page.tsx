@@ -1,10 +1,9 @@
 'use client';
 
 /**
- * Minerva panel. Step 1: dropped in a copy of the Ra bot (renamed to
- * Minerva on-screen) from Operations, reusing the same trading hooks.
- * Some wiring/cleanup (e.g. trimming the martingale toggle, dedicated
- * hook file) is expected in a follow-up pass.
+ * Minerva panel. Runs the "Eye of Ra" signal-based bot (see
+ * `use-minerva-bot.ts` / `use-ra-bot.ts`) exclusively — no Martingale mode,
+ * unlike Operations. Manual trading is also available alongside it.
  */
 
 import { useDigitsTrading } from '../../hooks/use-digits-trading';
