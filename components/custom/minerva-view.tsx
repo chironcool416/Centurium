@@ -171,11 +171,7 @@ function DigitFrequencyRow({
             onClick={() => onSelect(digit)}
             className={cn(
               'relative flex flex-col items-center gap-1 rounded-md border py-2 transition-all duration-200',
-              isSelected
-                ? 'border-destructive ring-1 ring-destructive'
-                : isHighest
-                  ? 'border-emerald-500/60'
-                  : 'border-border',
+              isSelected ? 'border-destructive ring-1 ring-destructive' : 'border-border',
               'bg-muted/30 hover:bg-muted/60 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]'
             )}
           >
@@ -199,7 +195,7 @@ function DigitFrequencyRow({
             <span
               className={cn(
                 'text-xs font-mono font-bold',
-                isHighest && 'text-emerald-400',
+                isHighest && 'text-amber-300',
                 isLowest && 'text-rose-400',
                 !isHighest && !isLowest && 'text-foreground/80'
               )}
@@ -232,7 +228,7 @@ function DigitHistogram({ title, stats }: { title: string; stats: DigitStats }) 
               <span
                 className={cn(
                   'text-[10px] font-bold',
-                  isHighest ? 'text-emerald-400' : isLowest ? 'text-rose-400' : 'text-foreground/80'
+                  isHighest ? 'text-primary' : isLowest ? 'text-rose-400' : 'text-foreground/80'
                 )}
               >
                 {stats.totalTicks > 0 ? `${Math.round(pct)}%` : ''}
@@ -241,7 +237,7 @@ function DigitHistogram({ title, stats }: { title: string; stats: DigitStats }) 
                 <div
                   className={cn(
                     'w-full rounded-sm',
-                    isHighest ? 'bg-emerald-500' : isLowest ? 'bg-rose-500/70' : 'bg-muted-foreground/50'
+                    isHighest ? 'bg-primary' : isLowest ? 'bg-rose-500/70' : 'bg-muted-foreground/50'
                   )}
                   style={{ height: `${Math.max((pct / maxPct) * 100, 3)}%` }}
                 />
@@ -280,14 +276,13 @@ function TickSparkline({ prices }: { prices: number[] }) {
       <path d={path} fill="none" stroke="currentColor" className="text-primary" strokeWidth={2} />
       {coords.map(([x, y], i) => {
         const isLast = i === coords.length - 1;
-        const isUp = i > 0 && points[i] >= points[i - 1];
         return (
           <circle
             key={i}
             cx={x}
             cy={y}
             r={isLast ? 4 : 2.5}
-            className={isUp ? 'fill-emerald-500' : 'fill-rose-500'}
+            className={isLast ? 'fill-primary' : 'fill-amber-300/80'}
           />
         );
       })}
@@ -731,7 +726,7 @@ export function MinervaView({
   const handleStart = handleRaStart;
 
   return (
-    <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
+    <div className="minerva-theme w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
           and mutually exclusive with the Manual panel on the far right.
           Sticky with its own scroll area on desktop so it can be scrolled
@@ -746,7 +741,7 @@ export function MinervaView({
         ariaLabel={localize('Expand automated robot panel')}
       >
       <Card
-        className={`panel-glow bg-card/60 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
+        className={`minerva-settings-panel panel-glow bg-card/60 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
         style={settingsPanel.style}
         onMouseEnter={settingsPanel.onMouseEnter}
         onMouseLeave={settingsPanel.onMouseLeave}
