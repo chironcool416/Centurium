@@ -1051,6 +1051,9 @@ export function MinervaView({
         onBlur={analysisPanel.onBlur}
       >
         <div aria-hidden className={analysisPanel.overlayClassName} />
+        <div aria-hidden className="minerva-digit-engraved-bg">
+          <span>MINERVA</span>
+        </div>
         <CardHeader className="pb-0">
           <div className="flex items-center gap-5 border-b border-border">
             {(
