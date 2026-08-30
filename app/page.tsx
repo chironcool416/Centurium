@@ -118,6 +118,7 @@ export default function HomePage() {
           </p>
 
           <div className="mt-10 grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 0ms both' }}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
               style={digitsCard.style}
@@ -148,7 +149,9 @@ export default function HomePage() {
                 </Button>
               </CardContent>
             </Card>
+            </div>
 
+            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 130ms both' }}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${robotCard.className}`}
               style={robotCard.style}
@@ -179,7 +182,9 @@ export default function HomePage() {
                 </Button>
               </CardContent>
             </Card>
+            </div>
 
+            <div style={{ animation: 'home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) 260ms both' }}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${minervaCard.className}`}
               style={minervaCard.style}
@@ -210,6 +215,7 @@ export default function HomePage() {
                 </Button>
               </CardContent>
             </Card>
+            </div>
           </div>
         </div>
 
