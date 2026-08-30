@@ -1,6 +1,21 @@
 /* Custom CSS for this template */
 /* Add your custom styles here */
 
+/* Homepage entry cards: staggered slide-in-from-right + fade-in on load
+   (Digits, then Operations, then Minerva). `both` fill-mode holds the
+   from-state during each card's animation-delay so nothing flashes at
+   full opacity before its turn, then holds the to-state afterwards. */
+@keyframes home-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* No-code build mode: briefly flash the draggable blocks (3× over 1.5s) when the
    layout is unlocked, so it's clear the components can be dragged to reorder. */
 @keyframes nocode-drag-hint {
