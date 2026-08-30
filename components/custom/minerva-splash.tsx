@@ -9,7 +9,7 @@
  * over the page's own background.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 
 const FLICKER_DURATION_MS = 20_000;
@@ -21,6 +21,15 @@ export function MinervaSplash({ onFinished }: { onFinished: () => void }) {
   const [fadingOut, setFadingOut] = useState(false);
   const [holdDuration, setHoldDuration] = useState(FLICKER_DURATION_MS);
 
+  // The Minerva page re-renders constantly (live WS ticks, balance updates),
+  // which would otherwise recreate `onFinished` every render. Stashing it in
+  // a ref lets the timer effect below run exactly once on mount instead of
+  // restarting the 20s countdown on every parent re-render.
+  const onFinishedRef = useRef(onFinished);
+  useEffect(() => {
+    onFinishedRef.current = onFinished;
+  }, [onFinished]);
+
   useEffect(() => {
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -31,13 +40,14 @@ export function MinervaSplash({ onFinished }: { onFinished: () => void }) {
     setHoldDuration(duration);
 
     const fadeTimer = setTimeout(() => setFadingOut(true), duration);
-    const doneTimer = setTimeout(() => onFinished(), duration + FADE_OUT_MS);
+    const doneTimer = setTimeout(() => onFinishedRef.current(), duration + FADE_OUT_MS);
 
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(doneTimer);
     };
-  }, [onFinished]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
