@@ -374,3 +374,57 @@
   animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
+
+/* Minerva trade view: bronze/gold Automaton theme with a teal accent for
+   "live" emphasis (the current tick, the newest recent-digit, the tallest
+   histogram bar). Overriding the app's own CSS variables scoped to this
+   wrapper re-themes every Card/Button/Input/Select/ToggleGroup underneath
+   it for free, since they're all built on these tokens already — no need
+   to touch each component's classes individually. */
+.minerva-theme {
+  --background: 22 17 12;
+  --card: 32 24 17;
+  --card-foreground: 237 224 200;
+  --foreground: 237 224 200;
+  --border: 180 140 70 / 0.35;
+  --muted: 54 41 28;
+  --muted-foreground: 196 168 130;
+  --input: 255 230 200 / 0.08;
+  --popover: 32 24 17;
+  --popover-foreground: 237 224 200;
+  --accent: 46 35 24;
+  --accent-foreground: 237 224 200;
+  --primary: 45 212 191;
+  --primary-foreground: 8 30 28;
+  --ring: 180 140 70;
+  color: rgb(var(--foreground));
+}
+
+/* Ornate gilded frame: a thin gold border plus soft warm corner blooms and
+   an inner vignette, applied to every Card within the Minerva theme so the
+   settings/analysis/manual panels all read as one consistent frame style. */
+.minerva-theme .rounded-lg.border.bg-card {
+  position: relative;
+  border-color: rgb(180 140 70 / 0.45);
+  box-shadow:
+    0 0 0 1px rgb(180 140 70 / 0.22),
+    inset 0 0 50px 12px rgb(0 0 0 / 0.35),
+    0 14px 32px -14px rgb(0 0 0 / 0.65);
+  background-image:
+    radial-gradient(circle at 0% 0%, rgb(217 160 90 / 0.16) 0%, transparent 24%),
+    radial-gradient(circle at 100% 0%, rgb(217 160 90 / 0.16) 0%, transparent 24%),
+    radial-gradient(circle at 0% 100%, rgb(217 160 90 / 0.12) 0%, transparent 24%),
+    radial-gradient(circle at 100% 100%, rgb(217 160 90 / 0.12) 0%, transparent 24%),
+    radial-gradient(ellipse at 50% -10%, rgb(70 52 34 / 0.5), transparent 60%);
+}
+
+/* Robot settings panel: the Minerva emblem statue faded in as a watermark
+   behind the form, echoing the splash screen's emblem. */
+.minerva-settings-panel {
+  background-image:
+    linear-gradient(180deg, rgb(22 17 12 / 0.6), rgb(22 17 12 / 0.82)),
+    url('/minerva-emblem.png');
+  background-repeat: no-repeat;
+  background-position: right -30px top -10px;
+  background-size: 280px auto;
+}
