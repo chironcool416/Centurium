@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
-import { LineChart, Zap } from 'lucide-react';
+import { LineChart, Zap, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Header } from '@/components/custom/header';
@@ -26,7 +26,7 @@ function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
 }
 
-type HomeCardKey = 'digits' | 'robot';
+type HomeCardKey = 'digits' | 'robot' | 'minerva';
 
 /**
  * Premium hover micro-interaction for the two entry cards below.
@@ -77,6 +77,7 @@ export default function HomePage() {
   const getHomeCardProps = useHomeCardHover();
   const digitsCard = getHomeCardProps('digits');
   const robotCard = getHomeCardProps('robot');
+  const minervaCard = getHomeCardProps('minerva');
 
   return (
     <>
@@ -115,7 +116,7 @@ export default function HomePage() {
             <Localize i18n_default_text="Trade digit contracts manually, or open the analysis view to track live ticks and place trades from one panel." />
           </p>
 
-          <div className="mt-10 grid w-full max-w-2xl gap-4 sm:grid-cols-2">
+          <div className="mt-10 grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
               style={digitsCard.style}
@@ -161,7 +162,7 @@ export default function HomePage() {
                   <Zap className="h-5 w-5" />
                 </div>
                 <h2 className="text-base font-semibold text-foreground">
-                  <Localize i18n_default_text="Robot" />
+                  <Localize i18n_default_text="Operations" />
                 </h2>
                 <p className="text-sm text-muted-foreground">
                   <Localize i18n_default_text="Digit frequency analysis, recent ticks and trade history alongside manual controls." />
@@ -172,7 +173,38 @@ export default function HomePage() {
                   className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
                 >
                   <Link href="/robot">
-                    <Localize i18n_default_text="Open Robot" />
+                    <Localize i18n_default_text="Open Operations" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card
+              className={`panel-glow bg-card/30 backdrop-blur-md text-left ${minervaCard.className}`}
+              style={minervaCard.style}
+              onMouseEnter={minervaCard.onMouseEnter}
+              onMouseLeave={minervaCard.onMouseLeave}
+              onFocus={minervaCard.onFocus}
+              onBlur={minervaCard.onBlur}
+            >
+              <div aria-hidden className={minervaCard.overlayClassName} />
+              <CardContent className="flex flex-col gap-3 pt-6">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-primary">
+                  <Shield className="h-5 w-5" />
+                </div>
+                <h2 className="text-base font-semibold text-foreground">
+                  <Localize i18n_default_text="Minerva" />
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  <Localize i18n_default_text="Coming soon." />
+                </p>
+                <Button
+                  asChild
+                  variant="outline"
+                  className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
+                >
+                  <Link href="/minerva">
+                    <Localize i18n_default_text="Open Minerva" />
                   </Link>
                 </Button>
               </CardContent>
