@@ -457,3 +457,861 @@ const SIDE_COLLAPSED_WIDTH = 40;
  */
 function CollapsibleSidePanel({
   isMobile,
+  isOpen,
+  onExpand,
+  openWidth,
+  arrowSide,
+  arrowIcon: ArrowIcon,
+  ariaLabel,
+  children,
+}: {
+  isMobile: boolean;
+  isOpen: boolean;
+  onExpand: () => void;
+  openWidth: number;
+  /** Which edge of the wrapper the collapsed arrow sits on — this is
+   *  always the panel's "inner" edge, the one that moves as it
+   *  slides open/shut. */
+  arrowSide: 'left' | 'right';
+  arrowIcon: typeof ChevronLeft;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  if (isMobile) {
+    // No horizontal space constraint when stacked — always show in full.
+    return <div className="w-full">{children}</div>;
+  }
+
+  return (
+    <motion.div
+      initial={false}
+      animate={{ width: isOpen ? openWidth : SIDE_COLLAPSED_WIDTH }}
+      transition={ROBOT_GLIDE_SPRING}
+      style={{ clipPath: 'inset(0)' }}
+      className="relative shrink-0 self-stretch"
+    >
+      {/* Fixed at its full open width so it never reflows — the wrapper's
+          clip-path is what continuously reveals or hides it as the width
+          above animates, which is what produces the sliding motion. */}
+      <div
+        style={{ width: openWidth }}
+        className={cn('h-full', !isOpen && 'pointer-events-none')}
+        aria-hidden={!isOpen}
+      >
+        {children}
+      </div>
+
+      {/* Collapsed-state arrow, anchored to the panel's inner edge (so it
+          sits in the right spot whether the panel is open or shut) and
+          simply cross-fading in as the slide finishes closing. Bold and
+          purple with a breathing glow — deliberately eye-catching rather
+          than subtle, so a first-time user notices there's a panel to
+          expand instead of missing it as a sliver of dead space. */}
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label={ariaLabel}
+        tabIndex={isOpen ? -1 : 0}
+        className={cn(
+          'side-panel-arrow absolute inset-y-0 flex items-center justify-center rounded-xl border-2 bg-card/95 backdrop-blur-sm text-purple-400 hover:text-purple-200 hover:bg-card transition-[opacity,color] duration-200',
+          arrowSide === 'right' ? 'right-0' : 'left-0',
+          isOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        )}
+        style={{ width: SIDE_COLLAPSED_WIDTH }}
+      >
+        <ArrowIcon className="h-5 w-5" strokeWidth={2.75} />
+      </button>
+    </motion.div>
+  );
+}
+
+export function MinervaView({
+  isConnected,
+  isAuthenticated,
+  balanceLabel,
+  symbols,
+  activeSymbol,
+  selectSymbol,
+  currentTick,
+  prices,
+  pipSize,
+  tradeType,
+  setTradeType,
+  contractMode,
+  setContractMode,
+  selectedDigit,
+  setSelectedDigit,
+  stake,
+  setStake,
+  duration,
+  setDuration,
+  durationLimits,
+  proposal,
+  isProposalLoading,
+  buyContract,
+  isBuying,
+  buyResult,
+  buyError,
+  clearBuyResult,
+  openPositions,
+  closedPositions,
+  sellContract,
+  sellingId,
+  sellError,
+  clearSellError,
+}: MinervaViewProps) {
+  const { localize } = useAppTranslations();
+  const digitTradeTypeOptions = getDigitTradeTypeOptions(localize);
+  const digitContractLabels = getDigitContractLabels(localize);
+
+  const getPanelProps = useRobotPanelHover();
+  const settingsPanel = getPanelProps('settings');
+  const analysisPanel = getPanelProps('analysis');
+  const manualPanel = getPanelProps('manual');
+
+  const isMobile = useIsMobile();
+  // Automated Robot is expanded and Manual is collapsed by default; the two
+  // are mutually exclusive, so a single value fully describes the layout.
+  const [openSide, setOpenSide] = useState<OpenSide>('automated');
+  const isAutomatedOpen = openSide === 'automated';
+  const isManualOpen = openSide === 'manual';
+
+  const [activeTab, setActiveTab] = useState<Tab>('digits');
+  // `prices` already contains the pre-fetched history merged with live ticks
+  // (see useTicks), so derive from it directly instead of keeping a separate
+  // buffer that would start empty and duplicate/lag the real data.
+  const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
+
+  const [raStreakCount, setRaStreakCount] = useState('5');
+  const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
+  const [raInitialStake, setRaInitialStake] = useState('1');
+  const [raStakeMultiplier, setRaStakeMultiplier] = useState('2.5');
+  const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
+  const [raTpIncrement, setRaTpIncrement] = useState('0');
+  const [raCooldownSeconds, setRaCooldownSeconds] = useState('60');
+  const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
+  const [raAccountTakeProfit, setRaAccountTakeProfit] = useState('0');
+  const [raAccountStopLoss, setRaAccountStopLoss] = useState('0');
+
+  // Load any saved robot settings once on mount.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<SavedRobotSettings>;
+      if (typeof saved.duration === 'number') setDuration(saved.duration);
+      if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
+      if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
+      if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
+      if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
+      if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+      if (typeof saved.raTpIncrement === 'string') setRaTpIncrement(saved.raTpIncrement);
+      if (typeof saved.raCooldownSeconds === 'string') setRaCooldownSeconds(saved.raCooldownSeconds);
+      if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
+      if (typeof saved.raAccountTakeProfit === 'string') setRaAccountTakeProfit(saved.raAccountTakeProfit);
+      if (typeof saved.raAccountStopLoss === 'string') setRaAccountStopLoss(saved.raAccountStopLoss);
+    } catch {
+      // Ignore malformed/unavailable storage — fields just keep their defaults.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveSettings = () => {
+    try {
+      const payload: SavedRobotSettings = {
+        duration,
+        raStreakCount,
+        raConfirmationStreak,
+        raInitialStake,
+        raStakeMultiplier,
+        raMartingaleAfterLosses,
+        raTpIncrement,
+        raCooldownSeconds,
+        raTradingMode,
+        raAccountTakeProfit,
+        raAccountStopLoss,
+      };
+      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+      toast.success(localize('Settings saved'));
+    } catch {
+      toast.error(localize('Could not save settings on this device.'));
+    }
+  };
+
+  const overallStats = useMemo(
+    () => computeDigitStats(priceHistory, pipSize),
+    [priceHistory, pipSize]
+  );
+  const last25 = useMemo(
+    () => computeDigitStats(priceHistory.slice(-25), pipSize),
+    [priceHistory, pipSize]
+  );
+  const last50 = useMemo(
+    () => computeDigitStats(priceHistory.slice(-50), pipSize),
+    [priceHistory, pipSize]
+  );
+  const last100 = useMemo(
+    () => computeDigitStats(priceHistory.slice(-100), pipSize),
+    [priceHistory, pipSize]
+  );
+  const recentDigits = useMemo(
+    () => priceHistory.slice(-RECENT_DIGITS_SHOWN).map((p) => getLastDigit(p, pipSize)),
+    [priceHistory, pipSize]
+  );
+  const lastDigit = useMemo(
+    () => (currentTick ? getLastDigit(currentTick.quote, pipSize) : null),
+    [currentTick, pipSize]
+  );
+
+  const raBot = useMinervaBot({
+    currentTick,
+    pipSize,
+    setStake,
+    setContractMode,
+    setSelectedDigit,
+    proposal,
+    isProposalLoading,
+    buyContract,
+    buyResult,
+    buyError,
+    clearBuyResult,
+    openPositions,
+  });
+
+  // Used to gate Manual mode and to decide what the Start/Stop button and
+  // header status line show.
+  const activeBotRunning = raBot.running;
+
+  const handleRaStart = () => {
+    if (raBot.running) {
+      raBot.stop('manual');
+      toast.info(localize('Robot stopped'));
+      return;
+    }
+    const streakCount = parseInt(raStreakCount, 10);
+    const confirmationStreak = parseInt(raConfirmationStreak, 10);
+    if (!streakCount || streakCount < 2 || streakCount > 20) {
+      toast.error(localize('Enter a valid Streak Count (2-20) first.'));
+      return;
+    }
+    if (!confirmationStreak || confirmationStreak < 2 || confirmationStreak > 20) {
+      toast.error(localize('Enter a valid Confirmation Streak (2-20) first.'));
+      return;
+    }
+    const raStake = parseFloat(raInitialStake);
+    if (!raStake || raStake <= 0) {
+      toast.error(localize('Enter a valid Minerva stake first.'));
+      return;
+    }
+    raBot.start({
+      streakCount,
+      confirmationStreak,
+      initialStake: raStake,
+      stakeMultiplier: parseFloat(raStakeMultiplier) || 1,
+      martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
+      tpIncrement: parseFloat(raTpIncrement) || 0,
+      cooldownSeconds: Math.max(0, parseInt(raCooldownSeconds, 10) || 0),
+      tradingMode: raTradingMode,
+      accountTakeProfit: parseFloat(raAccountTakeProfit) || 0,
+      accountStopLoss: parseFloat(raAccountStopLoss) || 0,
+    });
+    toast.info(localize('Robot started'), {
+      description:
+        raTradingMode === 'neutral'
+          ? localize('Watching for arm/confirm streaks — pick Trend or Counter to actually trade.')
+          : localize('Watching for arm/confirm streaks on the digit stream.'),
+    });
+  };
+
+  const handleStart = handleRaStart;
+
+  return (
+    <div className="minerva-theme w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
+      {/* Left: Automated Robot settings. Collapsible — expanded by default,
+          and mutually exclusive with the Manual panel on the far right.
+          Sticky with its own scroll area on desktop so it can be scrolled
+          independently of the page. */}
+      <CollapsibleSidePanel
+        isMobile={isMobile}
+        isOpen={isAutomatedOpen}
+        onExpand={() => setOpenSide('automated')}
+        openWidth={AUTOMATED_OPEN_WIDTH}
+        arrowSide="right"
+        arrowIcon={ChevronRight}
+        ariaLabel={localize('Expand automated robot panel')}
+      >
+      <Card
+        className={`minerva-settings-panel panel-glow bg-card/60 backdrop-blur-md flex flex-col lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] overflow-visible ${settingsPanel.className}`}
+        style={settingsPanel.style}
+        onMouseEnter={settingsPanel.onMouseEnter}
+        onMouseLeave={settingsPanel.onMouseLeave}
+        onFocus={settingsPanel.onFocus}
+        onBlur={settingsPanel.onBlur}
+      >
+        <div aria-hidden className={settingsPanel.overlayClassName} />
+        <CardHeader className="pb-3 shrink-0 lg:rounded-t-[inherit]">
+          <CardTitle className="minerva-engraved-title text-xl">
+            MINERVA
+          </CardTitle>
+          <p className="text-xs font-semibold text-foreground/90">
+            {isConnected ? (
+              balanceLabel ? (
+                balanceLabel
+              ) : (
+                <Localize i18n_default_text="Connected" />
+              )
+            ) : (
+              <Localize i18n_default_text="Not connected" />
+            )}
+          </p>
+          <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
+            <span className={cn('text-xs font-bold pr-2 min-w-0', activeBotRunning ? 'text-emerald-400' : 'text-foreground/85')}>
+              {getRaStatusLabel(
+                raBot.phase,
+                raBot.armedSide,
+                raBot.confirmProgress,
+                raConfirmationStreak,
+                localize,
+                raBot.burstActive,
+                raBot.burstPnl
+              )}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  'text-sm font-mono font-bold tabular-nums',
+                  raBot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                )}
+              >
+                {raBot.pnl >= 0 ? '+' : ''}
+                {raBot.pnl.toFixed(2)}
+              </span>
+            </div>
+          </div>
+          {!raBot.running && getRaStoppedLabel(raBot.stoppedReason, localize) && (
+            <p className="text-[11px] text-muted-foreground px-0.5">
+              {getRaStoppedLabel(raBot.stoppedReason, localize)}
+            </p>
+          )}
+          {raBot.running &&
+            !raBot.burstActive &&
+            getRaLastBurstLabel(raBot.lastBurstOutcome, localize) && (
+              <p className="text-[11px] text-muted-foreground px-0.5">
+                {getRaLastBurstLabel(raBot.lastBurstOutcome, localize)}
+              </p>
+            )}
+        </CardHeader>
+        <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
+          <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Market" />
+            </Label>
+            <SymbolSelector
+              symbols={symbols}
+              activeSymbol={activeSymbol}
+              onSymbolChange={selectSymbol}
+            />
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Duration" />
+            </Label>
+            <Input
+              type="number"
+              value={duration}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) setDuration(val);
+              }}
+              min={durationLimits.min}
+              max={durationLimits.max}
+              labelRight={localize('Ticks')}
+            />
+          </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake" />
+              </Label>
+              <Input value={raInitialStake} onChange={(e) => setRaInitialStake(e.target.value)} />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake Multiplier" />
+              </Label>
+              <Input value={raStakeMultiplier} onChange={(e) => setRaStakeMultiplier(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize(
+                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
+              )}
+            >
+              <Localize i18n_default_text="Start Martingale after N losses" />
+            </Label>
+            <Input
+              value={raMartingaleAfterLosses}
+              onChange={(e) => setRaMartingaleAfterLosses(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('N consecutive same-side digits (over4 / under5) required to arm a run before confirmation starts.')}
+              >
+                <Localize i18n_default_text="Streak Count" />
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={20}
+                value={raStreakCount}
+                onChange={(e) => setRaStreakCount(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('M more consecutive same-side digits, uninterrupted, required after arming before the trade fires.')}
+              >
+                <Localize i18n_default_text="Confirmation Streak" />
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={20}
+                value={raConfirmationStreak}
+                onChange={(e) => setRaConfirmationStreak(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Trading Mode" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={raTradingMode}
+              onValueChange={(v) => {
+                if (v) setRaTradingMode(v as MinervaTradingMode);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="trend" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trend" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="neutral" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Neutral" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="counter" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Counter" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {raTradingMode === 'trend' && (
+                <Localize i18n_default_text="Confirmed over4 → Superior 3, confirmed under5 → Inferior 6." />
+              )}
+              {raTradingMode === 'neutral' && (
+                <Localize i18n_default_text="Won't trade until you pick Trend or Counter." />
+              )}
+              {raTradingMode === 'counter' && (
+                <Localize i18n_default_text="Confirmed over4 → Inferior 6, confirmed under5 → Superior 3." />
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Added to the Account Take Profit threshold after every Minerva win.')}
+              >
+                <Localize i18n_default_text="TP Increment" />
+              </Label>
+              <Input value={raTpIncrement} onChange={(e) => setRaTpIncrement(e.target.value)} labelRight="USD" />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Cooldown" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={raCooldownSeconds}
+                onChange={(e) => setRaCooldownSeconds(e.target.value)}
+                labelRight={localize('sec')}
+              />
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once a signal fires, Minerva keeps trading that side until this run\'s profit reaches this amount, then goes back to watching. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Take Profit (per run)" />
+              </Label>
+              <Input
+                value={raAccountTakeProfit}
+                onChange={(e) => setRaAccountTakeProfit(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once a signal fires, Minerva keeps trading that side until this run\'s loss reaches this amount, then goes back to watching. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Stop Loss (per run)" />
+              </Label>
+              <Input
+                value={raAccountStopLoss}
+                onChange={(e) => setRaAccountStopLoss(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
+            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Minerva's own martingale on losses) until its Take Profit or Stop Loss is hit, then Minerva waits for the next signal." />
+          </p>
+
+          {(raBot.running || raBot.digitRecord.length > 0) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Digit Record" />
+                </Label>
+                {raBot.armedSide && (
+                  <span className="text-[11px] font-semibold text-foreground/80">
+                    {raSideLabel(raBot.armedSide, localize)} {localize('ARMED')} · {raBot.confirmProgress}/
+                    {raConfirmationStreak}
+                  </span>
+                )}
+              </div>
+              <RaDigitRecord digits={raBot.digitRecord} />
+            </div>
+          )}
+          </fieldset>
+
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={handleSaveSettings}
+          >
+            <Localize i18n_default_text="Save settings" />
+          </Button>
+
+          <Button
+            className="w-full"
+            size="lg"
+            variant={activeBotRunning ? 'destructive' : 'default'}
+            onClick={handleStart}
+            disabled={!isConnected || !isAuthenticated}
+          >
+            {activeBotRunning ? <Localize i18n_default_text="Stop" /> : <Localize i18n_default_text="Start" />}
+          </Button>
+          <p className="text-[11px] text-muted-foreground text-center">
+            {isAuthenticated ? (
+              <Localize i18n_default_text="Uses the same trading connection as Manual mode — only one can trade at a time." />
+            ) : (
+              <Localize i18n_default_text="Log in to run the robot." />
+            )}
+          </p>
+        </CardContent>
+      </Card>
+      </CollapsibleSidePanel>
+
+      {/* Center: Digit panel. Always visible, never collapses — it simply
+          fills whichever space the two side panels leave it. Since the
+          side panels animate their own width every frame (not via a
+          discrete swap), the browser reflows this panel's size in lock
+          step automatically — no extra animation needed here for it to
+          read as being smoothly pushed left/right. */}
+      <div className={isMobile ? 'w-full' : 'flex-1 min-w-0'}>
+      <Card
+        className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${analysisPanel.className}`}
+        style={analysisPanel.style}
+        onMouseEnter={analysisPanel.onMouseEnter}
+        onMouseLeave={analysisPanel.onMouseLeave}
+        onFocus={analysisPanel.onFocus}
+        onBlur={analysisPanel.onBlur}
+      >
+        <div aria-hidden className={analysisPanel.overlayClassName} />
+        <CardHeader className="pb-0">
+          <div className="flex items-center gap-5 border-b border-border">
+            {(
+              [
+                ['chart', localize('Chart')],
+                ['digits', localize('Digits')],
+                ['trades', localize('Trades')],
+                ['logs', localize('Logs')],
+              ] as [Tab, string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={cn(
+                  'pb-2.5 text-sm font-bold border-b-2 -mb-px transition-colors',
+                  activeTab === key
+                    ? 'border-primary text-foreground'
+                    : 'border-transparent text-foreground/70 hover:text-foreground'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-6">
+          {activeTab === 'digits' && (
+            <>
+              <div className="space-y-2">
+                <p className="text-center text-sm font-medium">
+                  <Localize i18n_default_text="Digits frequency percentage" />
+                </p>
+                <DigitFrequencyRow
+                  digitStats={overallStats}
+                  selectedDigit={selectedDigit}
+                  onSelect={setSelectedDigit}
+                  lastDigit={lastDigit}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  <Localize i18n_default_text="Most recent digits" />
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {recentDigits.length === 0 && (
+                    <span className="text-xs font-semibold text-foreground/90">
+                      <Localize i18n_default_text="Waiting for ticks…" />
+                    </span>
+                  )}
+                  {recentDigits.map((d, i) => {
+                    const isLast = i === recentDigits.length - 1;
+                    return (
+                      <span
+                        key={i}
+                        className={cn(
+                          'w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]',
+                          isLast
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-foreground/85'
+                        )}
+                      >
+                        {d}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <DigitHistogram title={localize('Last 25 digits')} stats={last25} />
+                <DigitHistogram title={localize('Last 50 digits')} stats={last50} />
+                <DigitHistogram title={localize('Last 100 digits')} stats={last100} />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  <Localize i18n_default_text="Recent ticks" />
+                </p>
+                <TickSparkline prices={priceHistory} />
+              </div>
+            </>
+          )}
+
+          {activeTab === 'chart' && (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              <Localize i18n_default_text="A full price chart isn't wired into this view yet — the live spot and recent ticks are shown on the Digits tab." />
+            </div>
+          )}
+
+          {activeTab === 'trades' && (
+            <>
+              {isAuthenticated ? (
+                <PositionsTable
+                  openPositions={openPositions.filter((p) => DIGIT_CONTRACT_TYPES.includes(p.contract_type))}
+                  closedPositions={closedPositions.filter((p) => DIGIT_CONTRACT_TYPES.includes(p.contract_type))}
+                  onSell={sellContract}
+                  sellingId={sellingId}
+                  sellError={sellError}
+                  onClearSellError={clearSellError}
+                  contractTypeLabels={digitContractLabels}
+                  className="mt-0"
+                />
+              ) : (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <Localize i18n_default_text="Log in to see your open and closed positions." />
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'logs' && (
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+              {raBot.log.length === 0 && (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
+                </div>
+              )}
+              {[...raBot.log].reverse().map((entry: MinervaLogEntry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
+                      {localize('Real')}
+                    </span>
+                    {entry.side && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
+                        {raSideLabel(entry.side, localize)}
+                        {entry.barrier ? ` · ${entry.barrier}` : ''}
+                      </span>
+                    )}
+                    <span className="text-foreground/80 font-medium">
+                      {new Date(entry.time).toLocaleTimeString()}
+                    </span>
+                    {entry.exitSpot !== null && (
+                      <span className="tabular-nums font-mono font-semibold text-foreground">{entry.exitSpot.toFixed(pipSize)}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="tabular-nums text-foreground/70">
+                      {localize('Stake')} {entry.stake.toFixed(2)}
+                    </span>
+                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {entry.won ? localize('Win') : localize('Loss')}
+                    </span>
+                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                      {entry.profit >= 0 ? '+' : ''}
+                      {entry.profit.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      </div>
+
+      {/* Right: Manual mode. Collapsible — collapsed by default, and
+          mutually exclusive with the Automated Robot panel on the far
+          left. Opening it collapses Automated and pushes Digit left. */}
+      <CollapsibleSidePanel
+        isMobile={isMobile}
+        isOpen={isManualOpen}
+        onExpand={() => setOpenSide('manual')}
+        openWidth={MANUAL_OPEN_WIDTH}
+        arrowSide="left"
+        arrowIcon={ChevronLeft}
+        ariaLabel={localize('Expand manual mode panel')}
+      >
+      <Card
+        className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${manualPanel.className}`}
+        style={manualPanel.style}
+        onMouseEnter={manualPanel.onMouseEnter}
+        onMouseLeave={manualPanel.onMouseLeave}
+        onFocus={manualPanel.onFocus}
+        onBlur={manualPanel.onBlur}
+      >
+        <div aria-hidden className={manualPanel.overlayClassName} />
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">
+            <Localize i18n_default_text="Manual mode" />
+          </CardTitle>
+          <p className="text-xs font-semibold text-foreground/90">
+            {activeSymbol?.underlying_symbol_name ?? localize('Select a market')}
+          </p>
+        </CardHeader>
+        <CardContent>
+          {activeBotRunning && (
+            <p className="text-xs text-amber-500 bg-amber-500/10 rounded-md px-2.5 py-1.5 mb-3">
+              <Localize i18n_default_text="Manual trading is paused while the robot is running." />
+            </p>
+          )}
+          <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Trade Type" />
+              </Label>
+              <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {digitTradeTypeOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {tradeType !== 'even-odd' && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Prediction" />
+                </Label>
+                <Select
+                  value={String(selectedDigit)}
+                  onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 10 }, (_, d) => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <TradeControls
+              tradeType={tradeType}
+              contractMode={contractMode}
+              onContractModeChange={setContractMode}
+              selectedDigit={selectedDigit}
+              isConnected={isConnected}
+              stake={stake}
+              onStakeChange={setStake}
+              duration={duration}
+              onDurationChange={setDuration}
+              durationLimits={durationLimits}
+              proposal={proposal}
+              isProposalLoading={isProposalLoading}
+              onBuy={buyContract}
+              isBuying={isBuying}
+              buyResult={buyResult}
+              buyError={buyError}
+              onClearBuyResult={clearBuyResult}
+              isAuthenticated={isAuthenticated}
+            />
+          </fieldset>
+        </CardContent>
+      </Card>
+      </CollapsibleSidePanel>
+    </div>
+  );
+}
