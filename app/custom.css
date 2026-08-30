@@ -428,3 +428,25 @@
   background-position: right -30px top -10px;
   background-size: 280px auto;
 }
+/* "MINERVA" title on the settings panel: bronze metal fill with a carved
+   groove — a dark shadow on the light-source side (top-left) reading as
+   the incised edge, plus a warm highlight on the opposite side (bottom-
+   right) reading as light catching the low edge of the engraving. */
+.minerva-engraved-title {
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  background: linear-gradient(
+    180deg,
+    rgb(230 196 140) 0%,
+    rgb(180 132 70) 45%,
+    rgb(120 82 40) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow:
+    -1px -1px 0 rgb(0 0 0 / 0.75),
+    -2px -2px 2px rgb(0 0 0 / 0.4),
+    1px 1px 0 rgb(255 214 160 / 0.35),
+    2px 2px 3px rgb(0 0 0 / 0.5);
+}
