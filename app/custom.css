@@ -523,12 +523,12 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  opacity: 0.16;
+  opacity: 0.34;
   text-shadow:
-    -1px -1px 0 rgb(0 0 0 / 0.75),
-    -2px -2px 2px rgb(0 0 0 / 0.4),
-    1px 1px 0 rgb(255 214 160 / 0.35),
-    2px 2px 3px rgb(0 0 0 / 0.5);
+    -1px -1px 0 rgb(0 0 0 / 0.85),
+    -3px -3px 4px rgb(0 0 0 / 0.55),
+    1px 1px 0 rgb(255 214 160 / 0.5),
+    3px 3px 5px rgb(0 0 0 / 0.6);
 }
 @media (max-width: 640px) {
   .minerva-digit-engraved-bg span {
