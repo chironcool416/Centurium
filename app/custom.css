@@ -283,3 +283,94 @@
   animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
+
+/* Minerva page splash: same flicker/glow technique as the homepage intro
+   above, re-themed bronze/gold to match the Automaton Minerva emblem. No
+   dark scrim behind it — the emblem PNG is already transparent, so it's
+   composited straight over the page background. */
+@keyframes minerva-emblem-flicker {
+  0%,
+  100% {
+    opacity: 0.35;
+    filter: drop-shadow(0 0 6px rgb(217 119 6 / 0.25))
+      drop-shadow(0 0 16px rgb(180 83 9 / 0.15))
+      drop-shadow(0 0 30px rgb(146 64 14 / 0.08));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 34px rgb(251 191 36 / 1))
+      drop-shadow(0 0 85px rgb(245 158 11 / 0.75))
+      drop-shadow(0 0 150px rgb(217 119 6 / 0.5));
+  }
+}
+.minerva-emblem {
+  animation: minerva-emblem-flicker 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .minerva-emblem {
+    animation: none;
+    opacity: 1;
+    filter: drop-shadow(0 0 28px rgb(245 158 11 / 0.55));
+  }
+}
+
+@keyframes minerva-emblem-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+.minerva-emblem-glow {
+  background: radial-gradient(
+    circle,
+    rgb(251 191 36 / 0.55) 0%,
+    rgb(217 119 6 / 0.26) 35%,
+    rgb(217 119 6 / 0) 70%
+  );
+  filter: blur(12px);
+  animation: minerva-emblem-glow-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .minerva-emblem-glow {
+    animation: none;
+    opacity: 0.6;
+    transform: scale(1);
+  }
+}
+
+@keyframes minerva-loading-text-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.minerva-loading-text {
+  animation: minerva-loading-text-pulse 2.4s ease-in-out infinite;
+  text-shadow: 0 0 12px rgb(251 191 36 / 0.6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .minerva-loading-text {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+.minerva-loading-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgb(217 119 6 / 0.9),
+    rgb(251 191 36 / 0.95)
+  );
+  animation-name: intro-loading-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
