@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * Public homepage. Simple welcome screen with entry points into the two
- * functional apps (Digits manual trading and the Robot/analysis view).
+ * Public homepage. Simple welcome screen with entry points into the three
+ * functional apps (Digits manual trading, the Operations/analysis view,
+ * and the Minerva automated bot).
  * Doesn't require auth — Header shows Log in / Sign up until the user
  * authenticates from inside one of the apps.
  */
@@ -196,7 +197,7 @@ export default function HomePage() {
                   <Localize i18n_default_text="Minerva" />
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  <Localize i18n_default_text="Coming soon." />
+                  <Localize i18n_default_text="Automated signal-based bot — arms on a digit streak, confirms, then trades until its take-profit or stop-loss." />
                 </p>
                 <Button
                   asChild
