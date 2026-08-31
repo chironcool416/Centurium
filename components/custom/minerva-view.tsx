@@ -439,8 +439,7 @@ type OpenSide = 'automated' | 'manual';
 // space to fight over there).
 const AUTOMATED_OPEN_WIDTH = 420;
 const MANUAL_OPEN_WIDTH = 300;
-const SIDE_COLLAPSED_WIDTH = 40;
-/**
+const SIDE_COLLAPSED_WIDTH = 40;/**
  * A side panel (Automated Robot or Manual) that can collapse down to a
  * thin strip showing only a subtle arrow. This behaves like a real
  * sliding drawer: the panel's content stays mounted and fully visible at
@@ -768,8 +767,7 @@ export function MinervaView({
         onBlur={settingsPanel.onBlur}
       >
         <div aria-hidden className={settingsPanel.overlayClassName} />
-        <CardHeader className="pb-3 shrink-0 lg:rounded-t-[inherit]">
-                    <CardTitle className="minerva-engraved-title text-xl">
+        <CardHeader className="pb-3 shrink-0 lg:rounded-t-[inherit]">          <CardTitle className="minerva-engraved-title text-xl">
             MINERVA
           </CardTitle>
           <p className="text-xs font-semibold text-foreground/90">
@@ -1146,8 +1144,7 @@ export function MinervaView({
                     ? 'border-primary text-foreground'
                     : 'border-transparent text-foreground/70 hover:text-foreground'
                 )}
-              >
-                                {label}
+              >                {label}
               </button>
             ))}
           </div>
