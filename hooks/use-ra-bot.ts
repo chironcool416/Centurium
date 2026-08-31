@@ -33,7 +33,7 @@ import { getLastDigit } from '@/lib/digit-stats';
 
 export type RaSide = 'over4' | 'under5' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
-export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | null;
+export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
  *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
@@ -88,12 +88,25 @@ interface UseRaBotParams {
   buyError: string | null;
   clearBuyResult: () => void;
   openPositions: OpenPosition[];
+  /** Current account balance, read live for the insufficient-funds check
+   *  below. Null while unauthenticated/unknown — the check is simply
+   *  skipped in that case (never blocks a burst on missing data). */
+  balance: number | null;
 }
 
 const DIGIT_RECORD_SIZE = 30;
 
 function sideOf(digit: number): RaSide {
   return digit > 4 ? 'over4' : 'under5';
+}
+
+/** Ra's own martingale stake for a given loss streak, mirroring the
+ *  calculation inside `placeTrade` below — factored out so the
+ *  insufficient-funds pre-check can compute "what would the next stake be"
+ *  without duplicating (or drifting from) the real firing logic. */
+function raStakeFor(cfg: RaBotConfig, lossStreak: number): number {
+  const lossesPastGrace = Math.max(0, lossStreak - cfg.martingaleStartAfter);
+  return cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
 }
 
 export function useRaBot({
@@ -109,6 +122,7 @@ export function useRaBot({
   buyError,
   clearBuyResult,
   openPositions,
+  balance,
 }: UseRaBotParams) {
   const [enabled, setEnabled] = useState(false);
   const [phase, setPhase] = useState<RaPhase>('idle');
@@ -170,6 +184,14 @@ export function useRaBot({
   // Entirely separate from the Martingale bot's loss tracking in
   // use-auto-bot.ts — Ra never reads or writes that bot's state.
   const lossStreakRef = useRef(0);
+  // Mirrors the `balance` prop in a ref so the settlement effect can read
+  // the live value synchronously when deciding whether the next martingale
+  // stake is affordable, without needing `balance` in that effect's
+  // dependency array.
+  const balanceRef = useRef<number | null>(balance);
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
   // Guards against buying a stale proposal left over from before we changed
   // contractMode/selectedDigit: setContractMode/setSelectedDigit and the
   // phase flip to 'awaiting-proposal' happen in the same tick, but the old
@@ -256,8 +278,7 @@ export function useRaBot({
   const placeTrade = useCallback(
     (side: Exclude<RaSide, null>) => {
       const cfg = cfgRef.current;
-      const lossesPastGrace = Math.max(0, lossStreakRef.current - cfg.martingaleStartAfter);
-      const raStake = cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
+      const raStake = raStakeFor(cfg, lossStreakRef.current);
       setStake(raStake.toFixed(2));
 
       const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
@@ -491,10 +512,18 @@ export function useRaBot({
       return;
     }
 
-    // Lost — keep the burst going: re-fire the exact same side/barrier
-    // immediately at the bumped-up martingale stake.
+    // Lost — before re-firing, check whether the account can actually
+    // afford the next martingale stake. If not, stop the whole bot outright
+    // (same treatment as Take Profit/Stop Loss above) rather than letting
+    // the buy fail against the API.
     const active = activeTradeRef.current;
     if (active) {
+      const nextStake = raStakeFor(cfg, lossStreakRef.current);
+      const bal = balanceRef.current;
+      if (bal !== null && nextStake > bal + 0.001) {
+        stop('insufficient-funds');
+        return;
+      }
       placeTrade(active.side as Exclude<RaSide, null>);
     } else {
       setPhase('idle');
