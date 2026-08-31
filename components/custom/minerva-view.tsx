@@ -31,6 +31,9 @@ import {
   type MinervaLogEntry,
 } from '@/hooks/use-minerva-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
+import { MinervaVictoryDialog } from '@/components/custom/minerva-victory-dialog';
+import { MinervaDefeatDialog } from '@/components/custom/minerva-defeat-dialog';
+import { MinervaInsufficientFundsDialog } from '@/components/custom/minerva-insufficient-funds-dialog';
 import type {
   ActiveSymbol,
   Tick,
@@ -84,6 +87,11 @@ export interface MinervaViewProps {
   isConnected: boolean;
   isAuthenticated: boolean;
   balanceLabel: string | null;
+  /** Raw numeric account balance, used by Minerva's own bot to check
+   *  whether the next martingale stake within a burst is affordable before
+   *  firing it (see `useRaBot`'s insufficient-funds stop reason). Null
+   *  while unauthenticated/unknown, in which case that check is skipped. */
+  balance: number | null;
 
   symbols: ActiveSymbol[];
   activeSymbol: ActiveSymbol | null;
@@ -324,7 +332,7 @@ function getRaStatusLabel(
 }
 
 function getRaStoppedLabel(
-  reason: 'manual' | 'take-profit' | 'stop-loss' | null,
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null,
   localize: (t: string) => string
 ): string | null {
   switch (reason) {
@@ -334,6 +342,8 @@ function getRaStoppedLabel(
       return localize('Stopped: Take Profit');
     case 'stop-loss':
       return localize('Stopped: Stop Loss');
+    case 'insufficient-funds':
+      return localize('Stopped: Insufficient Funds');
     default:
       return null;
   }
@@ -525,6 +535,7 @@ export function MinervaView({
   isConnected,
   isAuthenticated,
   balanceLabel,
+  balance,
   symbols,
   activeSymbol,
   selectSymbol,
@@ -666,11 +677,37 @@ export function MinervaView({
     buyError,
     clearBuyResult,
     openPositions,
+    balance,
   });
 
   // Used to gate Manual mode and to decide what the Start/Stop button and
   // header status line show.
   const activeBotRunning = raBot.running;
+
+  // Celebration/defeat/insufficient-funds modals — same pattern as
+  // Operations' trade-robot-view.tsx: each opens the moment the bot's
+  // stopped reason matches, independent of that reason so the user can
+  // dismiss it (and start a new run) without the reason itself changing.
+  const [minervaVictoryOpen, setMinervaVictoryOpen] = useState(false);
+  useEffect(() => {
+    if (raBot.stoppedReason === 'take-profit') {
+      setMinervaVictoryOpen(true);
+    }
+  }, [raBot.stoppedReason]);
+
+  const [minervaDefeatOpen, setMinervaDefeatOpen] = useState(false);
+  useEffect(() => {
+    if (raBot.stoppedReason === 'stop-loss') {
+      setMinervaDefeatOpen(true);
+    }
+  }, [raBot.stoppedReason]);
+
+  const [minervaInsufficientOpen, setMinervaInsufficientOpen] = useState(false);
+  useEffect(() => {
+    if (raBot.stoppedReason === 'insufficient-funds') {
+      setMinervaInsufficientOpen(true);
+    }
+  }, [raBot.stoppedReason]);
 
   const handleRaStart = () => {
     if (raBot.running) {
@@ -714,6 +751,22 @@ export function MinervaView({
   const handleStart = handleRaStart;
 
   return (
+    <>
+    <MinervaVictoryDialog
+      open={minervaVictoryOpen}
+      onOpenChange={setMinervaVictoryOpen}
+      onContinue={() => setMinervaVictoryOpen(false)}
+    />
+    <MinervaDefeatDialog
+      open={minervaDefeatOpen}
+      onOpenChange={setMinervaDefeatOpen}
+      onContinue={() => setMinervaDefeatOpen(false)}
+    />
+    <MinervaInsufficientFundsDialog
+      open={minervaInsufficientOpen}
+      onOpenChange={setMinervaInsufficientOpen}
+      onContinue={() => setMinervaInsufficientOpen(false)}
+    />
     <div className="minerva-theme w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
           and mutually exclusive with the Manual panel on the far right.
@@ -1280,5 +1333,6 @@ export function MinervaView({
       </Card>
       </CollapsibleSidePanel>
     </div>
+    </>
   );
 }
