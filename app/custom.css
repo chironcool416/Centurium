@@ -257,6 +257,46 @@
   }
 }
 
+/* Minerva "Inadequate Funds" modal: dark bronze/amber radial backdrop
+   behind the dialog content, plus a slow-breathing bronze glow behind the
+   statue image — same bloom technique as .victory-dialog-backdrop /
+   .defeat-dialog-backdrop above, re-themed bronze for a "can't afford the
+   next stake" moment rather than a win or a loss. */
+.minerva-insufficient-dialog-backdrop {
+  background:
+    radial-gradient(circle at 50% 18%, rgb(217 119 6 / 0.22) 0%, rgb(20 14 6 / 0) 55%),
+    linear-gradient(180deg, rgb(24 17 8) 0%, rgb(14 10 5) 100%);
+}
+
+@keyframes minerva-insufficient-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08);
+  }
+}
+.minerva-insufficient-glow {
+  background: radial-gradient(
+    circle,
+    rgb(217 119 6 / 0.55) 0%,
+    rgb(180 83 9 / 0.25) 40%,
+    rgb(180 83 9 / 0) 72%
+  );
+  filter: blur(14px);
+  animation: minerva-insufficient-glow-pulse 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .minerva-insufficient-glow {
+    animation: none;
+    opacity: 0.6;
+    transform: scale(1);
+  }
+}
+
 /* Loading bar beneath the emblem: fills linearly at 10%/second so it hits
    100% exactly as the flicker sequence ends. Duration is set inline per the
    splash component's actual hold time (10s normal, 2s reduced-motion). */
