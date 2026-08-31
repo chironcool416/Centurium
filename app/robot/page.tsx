@@ -25,6 +25,8 @@ export default function RobotPage() {
     isAuthenticated && activeAccount
       ? `${Number(activeAccount.balance).toFixed(2)} ${activeAccount.currency}`
       : null;
+  const balance =
+    isAuthenticated && activeAccount ? Number(activeAccount.balance) : null;
 
   return (
     <main className="relative flex flex-col bg-background/30 max-lg:h-dvh max-lg:overflow-y-auto lg:min-h-dvh">
@@ -55,6 +57,7 @@ export default function RobotPage() {
           isConnected={trading.isConnected}
           isAuthenticated={isAuthenticated}
           balanceLabel={balanceLabel}
+          balance={balance}
           symbols={trading.symbols}
           activeSymbol={trading.activeSymbol}
           selectSymbol={trading.selectSymbol}
