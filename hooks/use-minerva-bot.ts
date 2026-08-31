@@ -11,6 +11,7 @@ export {
   useRaBot as useMinervaBot,
   type RaSide as MinervaSide,
   type RaTradingMode as MinervaTradingMode,
+  type RaRunStrategy as MinervaRunStrategy,
   type RaStopReason as MinervaStopReason,
   type RaPhase as MinervaPhase,
   type RaBurstOutcome as MinervaBurstOutcome,
