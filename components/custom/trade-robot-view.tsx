@@ -81,6 +81,10 @@ export interface TradeRobotViewProps {
   isConnected: boolean;
   isAuthenticated: boolean;
   balanceLabel: string | null;
+  /** Raw numeric account balance — used by the Ra bot's insufficient-funds
+   *  check (see `useRaBot`) to know whether the next martingale stake
+   *  within a burst is affordable. Null while unauthenticated/unknown. */
+  balance: number | null;
 
   symbols: ActiveSymbol[];
   activeSymbol: ActiveSymbol | null;
@@ -351,7 +355,7 @@ function getRaStatusLabel(
 }
 
 function getRaStoppedLabel(
-  reason: 'manual' | 'take-profit' | 'stop-loss' | null,
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null,
   localize: (t: string) => string
 ): string | null {
   switch (reason) {
@@ -361,6 +365,8 @@ function getRaStoppedLabel(
       return localize('Stopped: Take Profit');
     case 'stop-loss':
       return localize('Stopped: Stop Loss');
+    case 'insufficient-funds':
+      return localize('Stopped: Insufficient Funds');
     default:
       return null;
   }
@@ -552,6 +558,7 @@ export function TradeRobotView({
   isConnected,
   isAuthenticated,
   balanceLabel,
+  balance,
   symbols,
   activeSymbol,
   selectSymbol,
@@ -726,6 +733,7 @@ export function TradeRobotView({
     buyError,
     clearBuyResult,
     openPositions,
+    balance,
   });
 
   // Whichever strategy is currently selected — used to gate Manual mode and
