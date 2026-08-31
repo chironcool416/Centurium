@@ -34,6 +34,8 @@ export default function MinervaPage() {
     isAuthenticated && activeAccount
       ? `${Number(activeAccount.balance).toFixed(2)} ${activeAccount.currency}`
       : null;
+  const balance =
+    isAuthenticated && activeAccount ? Number(activeAccount.balance) : null;
 
   return (
     <>
@@ -66,6 +68,7 @@ export default function MinervaPage() {
           isConnected={trading.isConnected}
           isAuthenticated={isAuthenticated}
           balanceLabel={balanceLabel}
+          balance={balance}
           symbols={trading.symbols}
           activeSymbol={trading.activeSymbol}
           selectSymbol={trading.selectSymbol}
