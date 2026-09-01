@@ -139,6 +139,7 @@ interface SavedRobotSettings {
   raInitialStake: string;
   raStakeMultiplier: string;
   raMartingaleAfterLosses: string;
+  raArmTimeLimitSeconds: string;
   raTradingMode: MinervaTradingMode;
   raTakeProfit: string;
   raStopLoss: string;
@@ -594,6 +595,8 @@ export function MinervaView({
   const [raInitialStake, setRaInitialStake] = useState('1');
   const [raStakeMultiplier, setRaStakeMultiplier] = useState('2.5');
   const [raMartingaleAfterLosses, setRaMartingaleAfterLosses] = useState('0');
+  // ARM Time Limit (seconds): 0 = no time limit. See use-ra-bot.ts.
+  const [raArmTimeLimitSeconds, setRaArmTimeLimitSeconds] = useState('0');
   const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
@@ -610,6 +613,7 @@ export function MinervaView({
       if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
       if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
       if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+      if (typeof saved.raArmTimeLimitSeconds === 'string') setRaArmTimeLimitSeconds(saved.raArmTimeLimitSeconds);
       if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
       if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
       if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
@@ -628,6 +632,7 @@ export function MinervaView({
         raInitialStake,
         raStakeMultiplier,
         raMartingaleAfterLosses,
+        raArmTimeLimitSeconds,
         raTradingMode,
         raTakeProfit,
         raStopLoss,
@@ -730,12 +735,14 @@ export function MinervaView({
       toast.error(localize('Enter a valid Minerva stake first.'));
       return;
     }
+    const armTimeLimitSeconds = Math.max(0, parseInt(raArmTimeLimitSeconds, 10) || 0);
     raBot.start({
       streakCount,
       confirmationStreak,
       initialStake: raStake,
       stakeMultiplier: parseFloat(raStakeMultiplier) || 1,
       martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
+      armTimeLimitSeconds,
       tradingMode: raTradingMode,
       takeProfit: parseFloat(raTakeProfit) || 0,
       stopLoss: parseFloat(raStopLoss) || 0,
@@ -933,6 +940,22 @@ export function MinervaView({
                 onChange={(e) => setRaConfirmationStreak(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize('Seconds a side may stay ARMED without reaching the confirmation streak before the arm is abandoned and Minerva goes back to watching for a fresh streak. 0 = no time limit.')}
+            >
+              <Localize i18n_default_text="ARM Time Limit (seconds)" />
+            </Label>
+            <Input
+              type="number"
+              min={0}
+              max={3600}
+              value={raArmTimeLimitSeconds}
+              onChange={(e) => setRaArmTimeLimitSeconds(e.target.value)}
+            />
           </div>
 
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
