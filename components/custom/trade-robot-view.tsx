@@ -1461,10 +1461,14 @@ export function TradeRobotView({
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
                       {localize('Real')}
                     </span>
-                    {entry.side && (
+                    {entry.signalSide && (
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
-                        {raSideLabel(entry.side, localize)}
-                        {entry.barrier ? ` · ${entry.barrier}` : ''}
+                        {raSideLabel(entry.signalSide, localize)} {localize('streak')}
+                      </span>
+                    )}
+                    {entry.barrier && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/15 text-primary">
+                        {localize('Traded')} {entry.barrier}
                       </span>
                     )}
                     <span className="text-foreground/80 font-medium">
