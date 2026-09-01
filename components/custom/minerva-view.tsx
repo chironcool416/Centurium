@@ -27,6 +27,7 @@ import {
   useMinervaBot,
   type MinervaPhase,
   type MinervaTradingMode,
+  type MinervaTradeType,
   type MinervaSide,
   type MinervaLogEntry,
 } from '@/hooks/use-minerva-bot';
@@ -141,6 +142,7 @@ interface SavedRobotSettings {
   raMartingaleAfterLosses: string;
   raArmTimeLimitSeconds: string;
   raTradingMode: MinervaTradingMode;
+  raTradeType: MinervaTradeType;
   raTakeProfit: string;
   raStopLoss: string;
 }
@@ -598,6 +600,9 @@ export function MinervaView({
   // ARM Time Limit (seconds): 0 = no time limit. See use-ra-bot.ts.
   const [raArmTimeLimitSeconds, setRaArmTimeLimitSeconds] = useState('0');
   const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
+  // Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
+  // Trade 2: over4 → Superior 6, under5 → Inferior 3.
+  const [raTradeType, setRaTradeType] = useState<MinervaTradeType>('trade1');
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
 
@@ -615,6 +620,7 @@ export function MinervaView({
       if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
       if (typeof saved.raArmTimeLimitSeconds === 'string') setRaArmTimeLimitSeconds(saved.raArmTimeLimitSeconds);
       if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
+      if (typeof saved.raTradeType === 'string') setRaTradeType(saved.raTradeType);
       if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
       if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
     } catch {
@@ -634,6 +640,7 @@ export function MinervaView({
         raMartingaleAfterLosses,
         raArmTimeLimitSeconds,
         raTradingMode,
+        raTradeType,
         raTakeProfit,
         raStopLoss,
       };
@@ -744,6 +751,7 @@ export function MinervaView({
       martingaleStartAfter: Math.max(0, parseInt(raMartingaleAfterLosses, 10) || 0),
       armTimeLimitSeconds,
       tradingMode: raTradingMode,
+      tradeType: raTradeType,
       takeProfit: parseFloat(raTakeProfit) || 0,
       stopLoss: parseFloat(raStopLoss) || 0,
     });
@@ -989,6 +997,34 @@ export function MinervaView({
               )}
               {raTradingMode === 'counter' && (
                 <Localize i18n_default_text="Confirmed over4 → Inferior 6, confirmed under5 → Superior 3." />
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Trade Type" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={raTradeType}
+              onValueChange={(v) => {
+                if (v) setRaTradeType(v as MinervaTradeType);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="trade1" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trade 1" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="trade2" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trade 2" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {raTradeType === 'trade1' ? (
+                <Localize i18n_default_text="Over4 → Superior 3, Under5 → Inferior 6." />
+              ) : (
+                <Localize i18n_default_text="Over4 → Superior 6, Under5 → Inferior 3." />
               )}
             </p>
           </div>
