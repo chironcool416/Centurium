@@ -72,6 +72,19 @@ export function getAuthInfo(): AuthInfo | null {
   return authInfo;
 }
 
+/**
+ * Like getAuthInfo(), but returns the stored token even if its access token
+ * has expired. Callers that only have this expired snapshot still have a
+ * usable refresh_token and should refresh instead of treating the session as
+ * gone. getAuthInfo() intentionally hides expired tokens from callers that
+ * expect a ready-to-use access token; this is for the callers that don't.
+ */
+export function getRawAuthInfo(): AuthInfo | null {
+  const raw = localStorage.getItem(AUTH_INFO_KEY);
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
 export function clearAuthInfo(): void {
   localStorage.removeItem(AUTH_INFO_KEY);
 }
