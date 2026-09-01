@@ -66,6 +66,15 @@ export interface RaBotConfig {
   stakeMultiplier: number;
   /** Consecutive Ra losses before the multiplier starts being applied. 0 = multiply from the first loss. */
   martingaleStartAfter: number;
+  /** Seconds a side may sit armed without reaching confirmation before the
+   *  arm is abandoned (primary streak + confirm progress wiped, back to
+   *  watching for a fresh N-run). Timer starts the moment a side arms (or
+   *  re-arms on a flip to the opposite side) and is cancelled/restarted
+   *  whenever that happens again. 0 or omitted = no time limit. Optional so
+   *  existing callers (e.g. Operations' trade-robot-view.tsx, which also
+   *  drives this shared hook) keep compiling unchanged — Minerva is
+   *  currently the only panel with a control for it. */
+  armTimeLimitSeconds?: number;
   tradingMode: RaTradingMode;
   /** Take-profit for the whole run: once total P/L (across every burst)
    *  reaches this, the bot stops outright. 0 = off. */
@@ -151,6 +160,7 @@ export function useRaBot({
     initialStake: 1,
     stakeMultiplier: 1,
     martingaleStartAfter: 0,
+    armTimeLimitSeconds: 0,
     tradingMode: 'neutral',
     takeProfit: 0,
     stopLoss: 0,
@@ -178,6 +188,13 @@ export function useRaBot({
   const armedSideRef = useRef<RaSide>(null);
   const primaryStreakRef = useRef<{ side: RaSide; count: number }>({ side: null, count: 0 });
   const confirmCountRef = useRef(0);
+  // Wall-clock timer for the ARM Time Limit: started fresh whenever a side
+  // newly arms or flips to the opposite side, cleared/restarted on the next
+  // arm/flip, and cleared outright when a burst fires or the arm is
+  // abandoned. Deliberately a real setTimeout (wall-clock) rather than
+  // something derived from tick counting, since ticks can slow down or
+  // stop arriving — the limit is "N seconds", not "N ticks".
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastProcessedEpochRef = useRef<number | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   // Ra's own consecutive-loss counter, driving its own stake martingale.
@@ -219,13 +236,49 @@ export function useRaBot({
   const lastFireKeyRef = useRef<string | null>(null);
   const skipLoadingWaitRef = useRef(false);
 
+  const clearArmTimer = useCallback(() => {
+    if (armTimerRef.current !== null) {
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
+    }
+  }, []);
+
+  // (Re)starts the ARM Time Limit countdown for whichever side just became
+  // armed. Called only on a fresh arm or a flip to the opposite side — an
+  // already-armed side holding its confirmation progress does NOT restart
+  // this, so the countdown genuinely belongs to "this arm", not to every
+  // tick that keeps it alive.
+  const scheduleArmTimer = useCallback(() => {
+    clearArmTimer();
+    const limit = cfgRef.current.armTimeLimitSeconds;
+    if (!limit || limit <= 0) return; // 0 = no time limit
+    armTimerRef.current = setTimeout(() => {
+      // Time's up with no confirmation — abandon this arm entirely (same
+      // shape of reset as a fired burst, minus the trade) and go back to
+      // watching for a fresh N-run.
+      armedSideRef.current = null;
+      primaryStreakRef.current = { side: null, count: 0 };
+      confirmCountRef.current = 0;
+      setArmedSide(null);
+      setConfirmProgress(0);
+      armTimerRef.current = null;
+    }, limit * 1000);
+  }, [clearArmTimer]);
+
+  // Belt-and-suspenders: clear any pending ARM Time Limit timeout if the
+  // component unmounts mid-countdown, so it never fires against stale refs.
+  useEffect(() => {
+    return () => clearArmTimer();
+  }, [clearArmTimer]);
+
   const resetTracking = useCallback(() => {
+    clearArmTimer();
     armedSideRef.current = null;
     primaryStreakRef.current = { side: null, count: 0 };
     confirmCountRef.current = 0;
     setArmedSide(null);
     setConfirmProgress(0);
-  }, []);
+  }, [clearArmTimer]);
 
   const pushLog = useCallback((entry: Omit<RaLogEntry, 'id' | 'time'>) => {
     setLog((prev) => [...prev.slice(-49), { ...entry, id: logIdRef.current++, time: Date.now() }]);
@@ -260,6 +313,7 @@ export function useRaBot({
 
   const stop = useCallback(
     (reason: RaStopReason = 'manual') => {
+      clearArmTimer();
       setEnabled(false);
       setStoppedReason(reason);
       setPhase('idle');
@@ -267,7 +321,7 @@ export function useRaBot({
       pendingContractIdRef.current = null;
       activeTradeRef.current = null;
     },
-    []
+    [clearArmTimer]
   );
 
   // --- Fires (or re-fires, mid-burst) a single trade for the given side.
@@ -349,11 +403,13 @@ export function useRaBot({
       if (armedSideRef.current === null) {
         armedSideRef.current = streakSide;
         confirmCountRef.current = 0;
+        scheduleArmTimer();
       } else if (streakSide !== armedSideRef.current) {
         armedSideRef.current = streakSide;
         confirmCountRef.current = 0;
+        scheduleArmTimer(); // fresh arm on the new side gets its own countdown
       }
-      // else: already armed on this side — no change.
+      // else: already armed on this side — no change, timer keeps running.
     }
 
     setArmedSide(armedSideRef.current);
@@ -393,6 +449,9 @@ export function useRaBot({
 
         // Full reset — mirrors the extension's resetArmState(): armed
         // side and primary streak are cleared too, not just confirmCount.
+        // Also cancels the ARM Time Limit countdown — confirmation beat
+        // the clock, so there's nothing left to time out.
+        clearArmTimer();
         armedSideRef.current = null;
         primaryStreakRef.current = { side: null, count: 0 };
         confirmCountRef.current = 0;
