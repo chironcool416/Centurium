@@ -10,6 +10,7 @@ import {
   getWebSocketOTP,
   logout as coreLogout,
   getAuthInfo,
+  getRawAuthInfo,
   getDerivAccounts,
   getActiveLoginId,
   storeDerivAccounts,
@@ -291,16 +292,37 @@ export function useAuth(): UseAuthReturn {
       tabHiddenAtRef.current = null;
 
       const accountId = activeAccountIdRef.current;
-      const authInfo = getAuthInfo();
-      if (!authInfo || !accountId) return;
+      if (!accountId) return;
+
+      // Read the raw stored token regardless of expiry. getAuthInfo() returns
+      // null once the access token has expired, which used to make this bail
+      // out silently even though a valid refresh_token was sitting right
+      // there in storage. A tab backgrounded long enough for the access token
+      // to expire is exactly the case this handler needs to handle, not skip.
+      let authInfo = getRawAuthInfo();
+      if (!authInfo) return;
+
+      if (authInfo.expires_at && Date.now() / 1000 > authInfo.expires_at) {
+        try {
+          authInfo = await refreshAccessToken(authInfo.refresh_token, getAuthConfig().clientId);
+        } catch {
+          // The refresh token itself is dead (revoked/expired) — this is a
+          // genuine session end, not a transient hiccup.
+          clearAllAuthData();
+          setAuthState('unauthenticated');
+          setWsUrl(undefined);
+          return;
+        }
+      }
 
       try {
         const otpUrl = await fetchOTPUrl(accountId, authInfo);
         setWsUrl(otpUrl);
       } catch {
-        clearAllAuthData();
-        setAuthState('unauthenticated');
-        setWsUrl(undefined);
+        // The token itself is valid — this is most likely a transient
+        // network blip fetching the OTP. Leave the existing session and
+        // wsUrl alone instead of forcing a logout; the next tab focus or
+        // reconnect attempt will pick up a fresh OTP.
       }
     };
 
