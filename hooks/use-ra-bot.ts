@@ -11,10 +11,12 @@ import { getLastDigit } from '@/lib/digit-stats';
  * driven by the real live tick stream instead of text-matching a page.
  *
  * Detection watches the over4 (digit > 4) / under5 (digit < 5) split, same
- * as the extension. Execution uses a wider barrier than detection, also
- * unchanged from the extension: a confirmed over4 run trades "Superior 3"
- * (DIGITOVER, barrier 3) and a confirmed under5 run trades "Inferior 6"
- * (DIGITUNDER, barrier 6) — Trend trades the same side that confirmed,
+ * as the extension. Execution barrier depends on `tradeType` (see
+ * RaTradeType): Trade 1 (the original, unchanged extension behavior) fires
+ * a confirmed over4 run as "Superior 3" (DIGITOVER, barrier 3) and a
+ * confirmed under5 run as "Inferior 6" (DIGITUNDER, barrier 6); Trade 2
+ * swaps the barrier the other way — over4 → "Superior 6", under5 →
+ * "Inferior 3". Either way, Trend trades the same side that confirmed,
  * Counter trades the opposite side, Neutral never trades.
  *
  * Once a signal fires, Ra doesn't place a single trade and go back to
@@ -33,6 +35,13 @@ import { getLastDigit } from '@/lib/digit-stats';
 
 export type RaSide = 'over4' | 'under5' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
+/** Which barrier pairing a confirmed signal fires at.
+ *  Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
+ *  Trade 2: over4 → Superior 6, under5 → Inferior 3 — same detection,
+ *  wider/inverted execution barrier. Optional on RaBotConfig so existing
+ *  callers (Operations' trade-robot-view.tsx) that don't set it keep
+ *  behaving exactly as Trade 1 always did. */
+export type RaTradeType = 'trade1' | 'trade2';
 export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
@@ -58,7 +67,7 @@ export interface RaLogEntry {
   /** The side actually traded for this burst (same for every trade within
    *  it) — equals signalSide in Trend mode, the opposite in Counter mode. */
   side: RaSide;
-  barrier: 'Superior 3' | 'Inferior 6' | null;
+  barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3' | null;
   digit: number | null;
   exitSpot: number | null;
   won: boolean;
@@ -87,6 +96,9 @@ export interface RaBotConfig {
    *  currently the only panel with a control for it. */
   armTimeLimitSeconds?: number;
   tradingMode: RaTradingMode;
+  /** Which barrier pairing to fire at — see RaTradeType above.
+   *  Undefined/omitted behaves exactly as Trade 1 always has. */
+  tradeType?: RaTradeType;
   /** Take-profit for the whole run: once total P/L (across every burst)
    *  reaches this, the bot stops outright. 0 = off. */
   takeProfit: number;
@@ -151,9 +163,10 @@ export function useRaBot({
   const [stoppedReason, setStoppedReason] = useState<RaStopReason>(null);
   const [armedSide, setArmedSide] = useState<RaSide>(null);
   const [confirmProgress, setConfirmProgress] = useState(0);
-  const [lastFired, setLastFired] = useState<{ side: RaSide; barrier: 'Superior 3' | 'Inferior 6' } | null>(
-    null
-  );
+  const [lastFired, setLastFired] = useState<{
+    side: RaSide;
+    barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3';
+  } | null>(null);
   // Whether Ra is currently mid-burst (has fired and is looping trades
   // toward this burst's TP/SL) as opposed to idle and watching for a signal.
   const [burstActive, setBurstActive] = useState(false);
@@ -196,7 +209,7 @@ export function useRaBot({
     signalSide: RaSide;
     contractMode: ContractMode;
     selectedDigit: number;
-    barrier: 'Superior 3' | 'Inferior 6';
+    barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3';
     stake: number;
   } | null>(null);
 
@@ -351,8 +364,20 @@ export function useRaBot({
       setStake(raStake.toFixed(2));
 
       const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
-      const selectedDigit = side === 'over4' ? 3 : 6;
-      const barrier: 'Superior 3' | 'Inferior 6' = side === 'over4' ? 'Superior 3' : 'Inferior 6';
+      // Trade 1 (default/original): over4 → Superior 3, under5 → Inferior 6.
+      // Trade 2: over4 → Superior 6, under5 → Inferior 3 — same side/contract
+      // mode, wider-or-narrower barrier swapped the other way.
+      const tradeType = cfg.tradeType ?? 'trade1';
+      const selectedDigit =
+        tradeType === 'trade1' ? (side === 'over4' ? 3 : 6) : side === 'over4' ? 6 : 3;
+      const barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3' =
+        tradeType === 'trade1'
+          ? side === 'over4'
+            ? 'Superior 3'
+            : 'Inferior 6'
+          : side === 'over4'
+            ? 'Superior 6'
+            : 'Inferior 3';
 
       // Same contract/barrier/stake as the last trade we fired? Then
       // useProposal won't re-subscribe and no loading pulse is coming —
