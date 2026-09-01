@@ -42,10 +42,21 @@ export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-
 export type RaBurstOutcome = 'won' | 'error' | null;
 
 /** One settled Ra trade, for the Logs tab — same shape/purpose as the
- *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired. */
+ *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired.
+ *  `signalSide` and `side`/`barrier` are deliberately separate: in Counter
+ *  mode (or Trend, for symmetry) the side that actually got traded can
+ *  differ from the side whose streak/confirmation triggered it, so a log
+ *  showing only the trade side alone can look wrong on review (e.g. a
+ *  confirmed under5 signal in Counter mode fires an over4-side trade —
+ *  showing just "Over 4 · Superior 3" hides that the signal was Under 5). */
 export interface RaLogEntry {
   id: number;
   time: number;
+  /** The side whose N-run + M-confirmation actually triggered this burst —
+   *  i.e. what Ra detected on the digit stream, independent of Trading Mode. */
+  signalSide: RaSide;
+  /** The side actually traded for this burst (same for every trade within
+   *  it) — equals signalSide in Trend mode, the opposite in Counter mode. */
   side: RaSide;
   barrier: 'Superior 3' | 'Inferior 6' | null;
   digit: number | null;
@@ -179,6 +190,10 @@ export function useRaBot({
   // needing the arm/confirm streaks to complete again.
   const activeTradeRef = useRef<{
     side: RaSide;
+    /** The signal side that triggered this burst — see RaLogEntry.signalSide
+     *  for why this is tracked separately from `side`. Fixed for the whole
+     *  burst, same as `side`. */
+    signalSide: RaSide;
     contractMode: ContractMode;
     selectedDigit: number;
     barrier: 'Superior 3' | 'Inferior 6';
@@ -330,7 +345,7 @@ export function useRaBot({
   // proposal → buy flow. Shared between opening a fresh burst and looping
   // the same trade again after a loss within it.
   const placeTrade = useCallback(
-    (side: Exclude<RaSide, null>) => {
+    (side: Exclude<RaSide, null>, signalSide: Exclude<RaSide, null>) => {
       const cfg = cfgRef.current;
       const raStake = raStakeFor(cfg, lossStreakRef.current);
       setStake(raStake.toFixed(2));
@@ -346,7 +361,7 @@ export function useRaBot({
       skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
       lastFireKeyRef.current = fireKey;
 
-      activeTradeRef.current = { side, contractMode, selectedDigit, barrier, stake: raStake };
+      activeTradeRef.current = { side, signalSide, contractMode, selectedDigit, barrier, stake: raStake };
       setContractMode(contractMode);
       setSelectedDigit(selectedDigit);
       setLastFired({ side, barrier });
@@ -445,7 +460,7 @@ export function useRaBot({
         setBurstPnl(0);
         setBurstActive(true);
         setLastBurstOutcome(null);
-        placeTrade(tradeSide);
+        placeTrade(tradeSide, confirmedSide as Exclude<RaSide, null>);
 
         // Full reset — mirrors the extension's resetArmState(): armed
         // side and primary streak are cleared too, not just confirmCount.
@@ -524,6 +539,7 @@ export function useRaBot({
 
     const tradeInfo = activeTradeRef.current;
     pushLog({
+      signalSide: tradeInfo?.signalSide ?? null,
       side: tradeInfo?.side ?? null,
       barrier: tradeInfo?.barrier ?? null,
       digit: exitDigit,
@@ -583,7 +599,7 @@ export function useRaBot({
         stop('insufficient-funds');
         return;
       }
-      placeTrade(active.side as Exclude<RaSide, null>);
+      placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
     } else {
       setPhase('idle');
     }
