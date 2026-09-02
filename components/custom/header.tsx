@@ -50,7 +50,7 @@ function AccountLabel({ type }: { type: 'demo' | 'real' }) {
   return (
     <span
       className={cn(
-        'text-sm font-medium',
+        'text-xs sm:text-sm font-medium whitespace-nowrap',
         type === 'demo' ? 'text-orange-500' : 'text-emerald-600'
       )}
     >
@@ -75,7 +75,7 @@ function resolveShowAppName(showAppName?: boolean): boolean {
 
 const inlineNavLinkClass = (active: boolean) =>
   cn(
-    'flex items-center justify-center w-8 h-8 rounded-lg transition-colors duration-300',
+    'flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-lg transition-colors duration-300 shrink-0',
     active ? 'bg-teal-600' : 'bg-transparent hover:bg-muted'
   );
 
@@ -87,7 +87,7 @@ function HeaderNavLinks({ isHome, isOperations }: { isHome: boolean; isOperation
   return (
     <>
       <Link href={`/${suffix}`} title="Home" aria-current={isHome ? 'page' : undefined} className={inlineNavLinkClass(isHome)}>
-        <Home className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+        <Home className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-white" strokeWidth={2} />
       </Link>
       <Link
         href={`/robot${suffix}`}
@@ -95,7 +95,7 @@ function HeaderNavLinks({ isHome, isOperations }: { isHome: boolean; isOperation
         aria-current={isOperations ? 'page' : undefined}
         className={inlineNavLinkClass(isOperations)}
       >
-        <Zap className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+        <Zap className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-white" strokeWidth={2} />
       </Link>
     </>
   );
@@ -106,10 +106,10 @@ function HeaderNavLinksFallback({ isHome, isOperations }: { isHome: boolean; isO
   return (
     <>
       <Link href="/" title="Home" aria-current={isHome ? 'page' : undefined} className={inlineNavLinkClass(isHome)}>
-        <Home className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+        <Home className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-white" strokeWidth={2} />
       </Link>
       <Link href="/robot" title="Operations" aria-current={isOperations ? 'page' : undefined} className={inlineNavLinkClass(isOperations)}>
-        <Zap className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+        <Zap className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-white" strokeWidth={2} />
       </Link>
     </>
   );
@@ -126,7 +126,7 @@ function HeaderNav() {
   const isHome = pathname === '/';
   const isOperations = pathname?.startsWith('/robot') ?? false;
   return (
-    <div className="flex items-center gap-1.5 rounded-xl bg-teal-950 p-1">
+    <div className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-teal-950 p-0.5 sm:p-1 shrink-0">
       <Suspense fallback={<HeaderNavLinksFallback isHome={isHome} isOperations={isOperations} />}>
         <HeaderNavLinks isHome={isHome} isOperations={isOperations} />
       </Suspense>
@@ -158,10 +158,10 @@ export function Header({
   const isAuthenticating = authState === 'authenticating';
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 border-b bg-background/80 backdrop-blur-sm">
-      <div className="flex items-center gap-3">
+    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-2 sm:px-4 py-3 border-b bg-background/80 backdrop-blur-sm">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {!logoSrc || logoError ? (
-          <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+          <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
             {logoLetter}
           </div>
         ) : (
@@ -169,7 +169,7 @@ export function Header({
           <img
             src={logoSrc}
             alt={localize('App Logo')}
-            className="h-10 w-auto object-contain"
+            className="h-8 w-auto object-contain shrink-0 sm:h-10"
             onError={() => setLogoError(true)}
           />
         )}
@@ -180,22 +180,22 @@ export function Header({
         )}
         <HeaderNav />
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1 sm:gap-3 shrink-0">
         {actions}
         <LanguageSwitcher />
         {isAuthenticated && activeAccount && (
           <Popover open={accountSwitcherOpen} onOpenChange={setAccountSwitcherOpen}>
             <PopoverTrigger asChild>
-              <button className="flex items-center gap-2 rounded-lg border border-border px-3 hover:bg-muted/50 transition-colors">
+              <button className="flex items-center gap-1 sm:gap-2 rounded-lg border border-border px-2 sm:px-3 hover:bg-muted/50 transition-colors shrink-0">
                 <div className="text-left">
                   <AccountLabel type={activeAccount.account_type} />
-                  <p className="text-base font-bold text-foreground">
+                  <p className="text-sm sm:text-base font-bold text-foreground whitespace-nowrap">
                     {formatBalance(activeAccount.balance, numberLocale)} {activeAccount.currency}
                   </p>
                 </div>
                 <svg
                   className={cn(
-                    'w-4 h-4 text-muted-foreground transition-transform',
+                    'hidden sm:block w-4 h-4 text-muted-foreground transition-transform shrink-0',
                     accountSwitcherOpen && 'rotate-180'
                   )}
                   fill="none"
