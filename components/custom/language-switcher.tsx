@@ -1,24 +1,70 @@
 'use client';
 
-import { Moon, Sun } from 'lucide-react';
-import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+import {
+  LANGUAGE_LABELS,
+  SUPPORTED_LANGUAGES,
+  type SupportedLanguage,
+} from '@/lib/i18n';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
+import { useState } from 'react';
 
-export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
-  const { localize } = useAppTranslations();
+export function LanguageSwitcher() {
+  const { currentLang, switchLanguage } = useAppTranslations();
+  const [open, setOpen] = useState(false);
+
+  const handleSelect = (lang: SupportedLanguage) => {
+    switchLanguage(lang);
+    setOpen(false);
+  };
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-8 w-8 sm:h-10 sm:w-10 shrink-0"
-      aria-label={localize('Toggle theme')}
-      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-    >
-      <Sun className="h-4 w-4 sm:h-[1.2rem] sm:w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-      <Moon className="absolute h-4 w-4 sm:h-[1.2rem] sm:w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-    </Button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 sm:h-9 min-w-0 sm:min-w-[4.5rem] justify-between gap-1 sm:gap-1.5 px-2 sm:px-2.5 shrink-0"
+          aria-label={LANGUAGE_LABELS[currentLang]}
+        >
+          <span className="text-xs font-semibold tracking-wide">{currentLang}</span>
+          <svg
+            className={cn(
+              'hidden sm:block h-3.5 w-3.5 text-muted-foreground transition-transform',
+              open && 'rotate-180'
+            )}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </Button>
+      </PopoverTrigger>
+      {/* Above edit-mode FixedZones (z-[60]); shared PopoverContent is z-50. */}
+      <PopoverContent align="end" className="z-[100] w-44 p-1">
+        <ul className="space-y-0.5">
+          {SUPPORTED_LANGUAGES.map((lang) => (
+            <li key={lang}>
+              <button
+                type="button"
+                onClick={() => handleSelect(lang)}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors',
+                  lang === currentLang ? 'bg-muted font-medium' : 'hover:bg-muted/50'
+                )}
+              >
+                <span>{LANGUAGE_LABELS[lang]}</span>
+                <span className="text-xs text-muted-foreground">{lang}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
