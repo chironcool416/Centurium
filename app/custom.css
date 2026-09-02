@@ -208,6 +208,21 @@
   }
 }
 
+/* Intro splash wreath: same orbiting technique as favicon-intro-wreath
+   (base stays still, laurel branches spin around the shared center), but
+   looped for the full ~10s hold instead of a fixed 3-cycle count, since the
+   hold duration here varies with prefers-reduced-motion. */
+.intro-emblem-wreath {
+  object-fit: contain;
+  animation: favicon-intro-orbit 2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .intro-emblem-wreath {
+    animation: none;
+  }
+}
+
 /* Soft ambient bloom sitting behind the emblem, breathing in sync with the
    flicker above so the whole thing reads as one glowing light source rather
    than just an outlined image. */
