@@ -4,21 +4,32 @@ import path from 'path';
 /**
  * Returns a favicon URI to embed in Next.js metadata.
  *
- * Checks public/logo.{png,jpg,jpeg,webp} in priority order. When a logo file
- * is found its public URL ('/logo.<ext>') is returned and set as the favicon
- * via generateMetadata — the same file that the Header component displays.
+ * Checks public/favicon.{png,jpg,jpeg,webp} first — a small, simplified mark
+ * meant to stay legible at tab-icon size (16–32px), independent from the
+ * full in-app logo. Falls back to public/logo.{png,jpg,jpeg,webp} if no
+ * dedicated favicon file is present, so existing deployments keep working
+ * unchanged.
  *
- * When no logo is present, an SVG letter-in-box is built from the app name
+ * When neither is present, an SVG letter-in-box is built from the app name
  * env var and the primary colour read from globals.css (patched by the App
  * Builder at deploy time). Base64 encoding is used instead of a
  * percent-encoded raw SVG to guarantee cross-browser compatibility — Firefox
  * and Safari misparse raw '#' characters inside text-based data URIs.
  */
 export function buildFaviconUri(): string | null {
-  // public/logo.<ext> is the single source of truth for the logo — used by
-  // both the Header component and as the favicon. The App Builder writes the
-  // logo here at deploy time; for local dev place any logo at public/logo.<ext>.
   const publicDir = path.join(process.cwd(), 'public');
+
+  // public/favicon.<ext> — dedicated tab-icon asset, independent of the
+  // in-app Header logo. Preferred when present.
+  for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+    if (fs.existsSync(path.join(publicDir, `favicon.${ext}`))) {
+      return `/favicon.${ext}`;
+    }
+  }
+
+  // public/logo.<ext> — used by the Header component. Falls back to this
+  // for the favicon too when no dedicated favicon file exists, so older
+  // deployments without a favicon.<ext> render exactly as before.
   for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
     if (fs.existsSync(path.join(publicDir, `logo.${ext}`))) {
       return `/logo.${ext}`;
