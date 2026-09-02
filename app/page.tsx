@@ -18,6 +18,7 @@ import { Header } from '@/components/custom/header';
 import { ThemeToggle } from '@/components/custom/theme-toggle';
 import { Footer } from '@/components/custom/footer';
 import { IntroSplash } from '@/components/custom/intro-splash';
+import { FaviconIntro } from '@/components/custom/favicon-intro';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useLogoSrc } from '@/components/custom/logo-src-provider';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
@@ -69,6 +70,7 @@ function useHomeCardHover() {
 }
 
 export default function HomePage() {
+  const [showFaviconIntro, setShowFaviconIntro] = useState(true);
   const [showIntro, setShowIntro] = useState(true);
   const logoSrc = useLogoSrc();
   const { localize } = useAppTranslations();
@@ -87,13 +89,18 @@ export default function HomePage() {
   // hold each card at its from-state (opacity 0) until the splash is gone,
   // then switch to the animation so it starts the moment the user can see it.
   const panelEntranceStyle = (delayMs: number): React.CSSProperties =>
-    showIntro
+    showFaviconIntro || showIntro
       ? { opacity: 0 }
       : { animation: `home-panel-in 600ms cubic-bezier(0.16, 1, 0.3, 1) ${delayMs}ms both` };
 
   return (
     <>
-      {showIntro && <IntroSplash onFinished={() => setShowIntro(false)} />}
+      {showFaviconIntro && (
+        <FaviconIntro onFinished={() => setShowFaviconIntro(false)} />
+      )}
+      {!showFaviconIntro && showIntro && (
+        <IntroSplash onFinished={() => setShowIntro(false)} />
+      )}
       <main className="relative flex flex-col bg-background/30 max-lg:h-dvh max-lg:overflow-y-auto lg:min-h-dvh">
         <div
           aria-hidden
