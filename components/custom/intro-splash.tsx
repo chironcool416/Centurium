@@ -45,17 +45,22 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
   return (
     <div
       role="presentation"
-      className={`fixed inset-0 z-[100] flex items-center justify-center bg-cover bg-center transition-opacity ease-out ${
+      className={`fixed inset-0 z-[100] flex items-center justify-center transition-opacity ease-out ${
         fadingOut ? 'opacity-0' : 'opacity-100'
       }`}
-      style={{
-        backgroundImage: "url('/hero-bg.jpg')",
-        transitionDuration: `${FADE_OUT_MS}ms`,
-      }}
+      style={{ transitionDuration: `${FADE_OUT_MS}ms` }}
     >
+      {/* Background sits on its own heavily blurred/scaled layer so the
+          hero photo's own emblem and text read as an out-of-focus backdrop
+          rather than a second logo competing with the orbit emblem above. */}
+      <div
+        aria-hidden
+        className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl"
+        style={{ backgroundImage: "url('/hero-bg.jpg')" }}
+      />
       {/* Near-black scrim so the background photo all but disappears,
           letting the emblem's glow read as the only light source. */}
-      <div className="absolute inset-0 bg-black/92" />
+      <div className="absolute inset-0 bg-black/95" />
       <div className="intro-emblem-glow absolute h-[70vmin] w-[70vmin] rounded-full" />
       <div className="relative flex flex-col items-center gap-8">
         <div className="intro-emblem relative h-72 w-72 select-none sm:h-96 sm:w-96 md:h-[28rem] md:w-[28rem] lg:h-[32rem] lg:w-[32rem]">
