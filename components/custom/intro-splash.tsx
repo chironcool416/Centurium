@@ -5,6 +5,11 @@
  * Digits/Robot panels appear. Reuses the same hero background as the
  * homepage; the Centurium emblem blinks/glows on top of it for ~10s, then
  * the whole overlay fades out and unmounts.
+ *
+ * Same two-layer orbit technique as FaviconIntro: the ring+helmet
+ * (centurium-orbit-base.png) stay perfectly still while the laurel wreath
+ * (centurium-orbit-wreath.png) spins around the shared center, looped for
+ * the whole hold instead of a fixed cycle count.
  */
 
 import { useEffect, useState } from 'react';
@@ -53,14 +58,22 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
       <div className="absolute inset-0 bg-black/92" />
       <div className="intro-emblem-glow absolute h-[70vmin] w-[70vmin] rounded-full" />
       <div className="relative flex flex-col items-center gap-8">
-        <Image
-          src="/centurium-emblem.png"
-          alt="Centurium Capital"
-          width={1091}
-          height={1213}
-          priority
-          className="intro-emblem h-auto w-72 select-none sm:w-96 md:w-[28rem] lg:w-[32rem]"
-        />
+        <div className="intro-emblem relative h-72 w-72 select-none sm:h-96 sm:w-96 md:h-[28rem] md:w-[28rem] lg:h-[32rem] lg:w-[32rem]">
+          <Image
+            src="/centurium-orbit-base.png"
+            alt="Centurium Capital"
+            fill
+            priority
+            className="object-contain"
+          />
+          <Image
+            src="/centurium-orbit-wreath.png"
+            alt=""
+            fill
+            priority
+            className="intro-emblem-wreath"
+          />
+        </div>
         <div className="intro-loading-track h-1.5 w-56 rounded-full sm:w-72">
           <div
             className="intro-loading-fill rounded-full"
