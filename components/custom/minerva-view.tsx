@@ -35,6 +35,7 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { MinervaVictoryDialog } from '@/components/custom/minerva-victory-dialog';
 import { MinervaDefeatDialog } from '@/components/custom/minerva-defeat-dialog';
 import { MinervaInsufficientFundsDialog } from '@/components/custom/minerva-insufficient-funds-dialog';
+import { MinervaSettingsProfilesDialog } from '@/components/custom/minerva-settings-profiles-dialog';
 import type {
   ActiveSymbol,
   Tick,
@@ -131,7 +132,11 @@ export interface MinervaViewProps {
 
 const HISTORY_WINDOW = 100;
 const RECENT_DIGITS_SHOWN = 26;
-const ROBOT_SETTINGS_STORAGE_KEY = 'centurium:robot-settings';
+// Legacy single-slot key from before named profiles existed. Only read once,
+// to migrate whatever was saved there into a "Default" profile.
+const LEGACY_ROBOT_SETTINGS_STORAGE_KEY = 'centurium:robot-settings';
+const ROBOT_SETTINGS_PROFILES_STORAGE_KEY = 'centurium:robot-settings-profiles';
+const ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY = 'centurium:robot-settings-active-profile';
 
 interface SavedRobotSettings {
   duration: number;
@@ -146,6 +151,15 @@ interface SavedRobotSettings {
   raTakeProfit: string;
   raStopLoss: string;
 }
+
+/** A named, timestamped settings snapshot — one entry per saved profile. */
+interface RobotSettingsProfileRecord {
+  name: string;
+  savedAt: number;
+  settings: SavedRobotSettings;
+}
+
+type RobotSettingsProfilesMap = Record<string, RobotSettingsProfileRecord>;
 
 // Same spring used for the equivalent glide animation on the standalone
 // Digits page, so the motion feels identical across both pages.
@@ -606,49 +620,122 @@ export function MinervaView({
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
 
-  // Load any saved robot settings once on mount.
+  const [robotProfiles, setRobotProfiles] = useState<RobotSettingsProfilesMap>({});
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
+  const [profilesDialogOpen, setProfilesDialogOpen] = useState(false);
+
+  const applySettings = (saved: Partial<SavedRobotSettings>) => {
+    if (typeof saved.duration === 'number') setDuration(saved.duration);
+    if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
+    if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
+    if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
+    if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
+    if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+    if (typeof saved.raArmTimeLimitSeconds === 'string') setRaArmTimeLimitSeconds(saved.raArmTimeLimitSeconds);
+    if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
+    if (typeof saved.raTradeType === 'string') setRaTradeType(saved.raTradeType);
+    if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
+    if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+  };
+
+  const currentSettingsSnapshot = (): SavedRobotSettings => ({
+    duration,
+    raStreakCount,
+    raConfirmationStreak,
+    raInitialStake,
+    raStakeMultiplier,
+    raMartingaleAfterLosses,
+    raArmTimeLimitSeconds,
+    raTradingMode,
+    raTradeType,
+    raTakeProfit,
+    raStopLoss,
+  });
+
+  const persistProfiles = (next: RobotSettingsProfilesMap) => {
+    window.localStorage.setItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
+  };
+
+  // Load any saved profiles once on mount. Also migrates the old single-slot
+  // save (from before named profiles existed) into a "Default" profile, so
+  // nobody's existing saved settings silently disappear.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as Partial<SavedRobotSettings>;
-      if (typeof saved.duration === 'number') setDuration(saved.duration);
-      if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
-      if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
-      if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
-      if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
-      if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
-      if (typeof saved.raArmTimeLimitSeconds === 'string') setRaArmTimeLimitSeconds(saved.raArmTimeLimitSeconds);
-      if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
-      if (typeof saved.raTradeType === 'string') setRaTradeType(saved.raTradeType);
-      if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
-      if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+      const raw = window.localStorage.getItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY);
+      let map: RobotSettingsProfilesMap = raw ? (JSON.parse(raw) as RobotSettingsProfilesMap) : {};
+
+      if (!raw) {
+        const legacyRaw = window.localStorage.getItem(LEGACY_ROBOT_SETTINGS_STORAGE_KEY);
+        if (legacyRaw) {
+          const legacySettings = JSON.parse(legacyRaw) as SavedRobotSettings;
+          map = {
+            Default: { name: 'Default', savedAt: Date.now(), settings: legacySettings },
+          };
+          persistProfiles(map);
+        }
+      }
+
+      setRobotProfiles(map);
+
+      const lastActive = window.localStorage.getItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+      if (lastActive && map[lastActive]) {
+        applySettings(map[lastActive].settings);
+        setActiveProfileName(lastActive);
+      }
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSaveSettings = () => {
+  const handleSaveProfile = (name: string) => {
     try {
-      const payload: SavedRobotSettings = {
-        duration,
-        raStreakCount,
-        raConfirmationStreak,
-        raInitialStake,
-        raStakeMultiplier,
-        raMartingaleAfterLosses,
-        raArmTimeLimitSeconds,
-        raTradingMode,
-        raTradeType,
-        raTakeProfit,
-        raStopLoss,
+      const next: RobotSettingsProfilesMap = {
+        ...robotProfiles,
+        [name]: { name, savedAt: Date.now(), settings: currentSettingsSnapshot() },
       };
-      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
-      toast.success(localize('Settings saved'));
+      persistProfiles(next);
+      setRobotProfiles(next);
+      setActiveProfileName(name);
+      window.localStorage.setItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      toast.success(localize('Saved profile "{{name}}"', { name }));
     } catch {
       toast.error(localize('Could not save settings on this device.'));
     }
+  };
+
+  const handleLoadProfile = (name: string) => {
+    const profile = robotProfiles[name];
+    if (!profile) return;
+    applySettings(profile.settings);
+    setActiveProfileName(name);
+    try {
+      window.localStorage.setItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+    } catch {
+      // Non-fatal — the settings are already applied in-memory either way.
+    }
+    toast.success(localize('Loaded profile "{{name}}"', { name }));
+    setProfilesDialogOpen(false);
+  };
+
+  const handleDeleteProfile = (name: string) => {
+    const next = { ...robotProfiles };
+    delete next[name];
+    try {
+      persistProfiles(next);
+    } catch {
+      // Ignore — in-memory state below still reflects the deletion this session.
+    }
+    setRobotProfiles(next);
+    if (activeProfileName === name) {
+      setActiveProfileName(null);
+      try {
+        window.localStorage.removeItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+      } catch {
+        // Non-fatal.
+      }
+    }
+    toast.success(localize('Deleted profile "{{name}}"', { name }));
   };
 
   const overallStats = useMemo(
@@ -781,6 +868,15 @@ export function MinervaView({
       open={minervaInsufficientOpen}
       onOpenChange={setMinervaInsufficientOpen}
       onContinue={() => setMinervaInsufficientOpen(false)}
+    />
+    <MinervaSettingsProfilesDialog
+      open={profilesDialogOpen}
+      onOpenChange={setProfilesDialogOpen}
+      profiles={robotProfiles}
+      activeProfileName={activeProfileName}
+      onSave={handleSaveProfile}
+      onLoad={handleLoadProfile}
+      onDelete={handleDeleteProfile}
     />
     <div className="minerva-theme w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
@@ -1086,9 +1182,10 @@ export function MinervaView({
           <Button
             className="w-full"
             variant="outline"
-            onClick={handleSaveSettings}
+            onClick={() => setProfilesDialogOpen(true)}
           >
-            <Localize i18n_default_text="Save settings" />
+            <Localize i18n_default_text="Settings profiles" />
+            {activeProfileName ? ` — ${activeProfileName}` : ''}
           </Button>
 
           <Button
