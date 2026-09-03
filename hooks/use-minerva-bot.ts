@@ -16,4 +16,5 @@ export {
   type RaBurstOutcome as MinervaBurstOutcome,
   type RaLogEntry as MinervaLogEntry,
   type RaTradeType as MinervaTradeType,
+  type RaRunMode as MinervaRunMode,
 } from './use-ra-bot';
