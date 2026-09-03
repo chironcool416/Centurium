@@ -28,6 +28,7 @@ import {
   type MinervaPhase,
   type MinervaTradingMode,
   type MinervaTradeType,
+  type MinervaRunMode,
   type MinervaSide,
   type MinervaLogEntry,
 } from '@/hooks/use-minerva-bot';
@@ -148,6 +149,7 @@ interface SavedRobotSettings {
   raArmTimeLimitSeconds: string;
   raTradingMode: MinervaTradingMode;
   raTradeType: MinervaTradeType;
+  raRunMode: MinervaRunMode;
   raTakeProfit: string;
   raStopLoss: string;
 }
@@ -617,6 +619,10 @@ export function MinervaView({
   // Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
   // Trade 2: over4 → Superior 6, under5 → Inferior 3.
   const [raTradeType, setRaTradeType] = useState<MinervaTradeType>('trade1');
+  // Burst (default): a win ends the burst and Minerva waits for a fresh
+  // signal. Continuous: a win keeps the run going straight through to
+  // Take Profit/Stop Loss, with no wait in between.
+  const [raRunMode, setRaRunMode] = useState<MinervaRunMode>('burst');
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
 
@@ -634,6 +640,7 @@ export function MinervaView({
     if (typeof saved.raArmTimeLimitSeconds === 'string') setRaArmTimeLimitSeconds(saved.raArmTimeLimitSeconds);
     if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
     if (typeof saved.raTradeType === 'string') setRaTradeType(saved.raTradeType);
+    if (typeof saved.raRunMode === 'string') setRaRunMode(saved.raRunMode);
     if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
     if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
   };
@@ -648,6 +655,7 @@ export function MinervaView({
     raArmTimeLimitSeconds,
     raTradingMode,
     raTradeType,
+    raRunMode,
     raTakeProfit,
     raStopLoss,
   });
@@ -839,6 +847,7 @@ export function MinervaView({
       armTimeLimitSeconds,
       tradingMode: raTradingMode,
       tradeType: raTradeType,
+      runMode: raRunMode,
       takeProfit: parseFloat(raTakeProfit) || 0,
       stopLoss: parseFloat(raStopLoss) || 0,
     });
@@ -1125,6 +1134,34 @@ export function MinervaView({
             </p>
           </div>
 
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Run Mode" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={raRunMode}
+              onValueChange={(v) => {
+                if (v) setRaRunMode(v as MinervaRunMode);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="burst" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Burst" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="continuous" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Continuous" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {raRunMode === 'burst' ? (
+                <Localize i18n_default_text="A win ends the run — Minerva waits for the next signal." />
+              ) : (
+                <Localize i18n_default_text="A win keeps going — Minerva re-fires immediately, no waiting, straight to Take Profit/Stop Loss." />
+              )}
+            </p>
+          </div>
+
           <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
@@ -1158,7 +1195,11 @@ export function MinervaView({
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="Each signal opens a run that trades continuously (same side, Minerva's own martingale on losses) until it wins, then Minerva waits for the next signal. Take Profit and Stop Loss track total profit/loss across every run and stop Minerva outright once hit." />
+            {raRunMode === 'burst' ? (
+              <Localize i18n_default_text="Each signal opens a burst that trades continuously (same side, Minerva's own martingale on losses) until it wins, then Minerva waits for the next signal. Take Profit and Stop Loss track total profit/loss across every burst and stop Minerva outright once hit." />
+            ) : (
+              <Localize i18n_default_text="Once a signal fires, Minerva trades continuously (same side, martingale on losses, back to base stake on each win) with no pauses in between, straight through until Take Profit or Stop Loss stops it outright." />
+            )}
           </p>
 
           {(raBot.running || raBot.digitRecord.length > 0) && (
