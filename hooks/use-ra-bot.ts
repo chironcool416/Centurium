@@ -31,6 +31,14 @@ import { getLastDigit } from '@/lib/digit-stats';
  * the running total P/L (`pnl`, accumulated across every burst) after each
  * settlement — the moment either is hit, the bot stops outright (same as
  * calling stop() manually), rather than just ending the current burst.
+ *
+ * Run Mode decides what a *win* does. In 'burst' mode (the original
+ * behavior) a win ends the current burst and Ra drops back to watching the
+ * digit stream for a fresh arm/confirm signal before it trades again. In
+ * 'continuous' mode a win doesn't end anything — Ra just re-fires the same
+ * side straight through, burst after burst back-to-back with no idle
+ * watching in between, until Take Profit or Stop Loss stops the run
+ * outright (or a loss streak makes the next stake unaffordable).
  */
 
 export type RaSide = 'over4' | 'under5' | null;
@@ -42,6 +50,11 @@ export type RaTradingMode = 'trend' | 'neutral' | 'counter';
  *  callers (Operations' trade-robot-view.tsx) that don't set it keep
  *  behaving exactly as Trade 1 always did. */
 export type RaTradeType = 'trade1' | 'trade2';
+/** 'burst' (default): a win ends the current burst and Ra waits for a
+ *  fresh arm/confirm signal before trading again. 'continuous': a win
+ *  keeps the run going — Ra re-fires the same side immediately, with no
+ *  wait, until Take Profit/Stop Loss stops it outright. */
+export type RaRunMode = 'burst' | 'continuous';
 export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
@@ -105,6 +118,10 @@ export interface RaBotConfig {
   /** Stop-loss for the whole run (positive number; stops the bot once total
    *  P/L <= -this). 0 = off. */
   stopLoss: number;
+  /** What a win does — see RaRunMode above. Undefined/omitted behaves
+   *  exactly as 'burst' always has, so existing callers (Operations'
+   *  trade-robot-view.tsx) keep compiling and behaving unchanged. */
+  runMode?: RaRunMode;
 }
 
 interface UseRaBotParams {
@@ -601,10 +618,31 @@ export function useRaBot({
       return;
     }
 
+    const active = activeTradeRef.current;
+
     if (won) {
-      // Burst won — go back to watching the digit stream for the next
-      // arm/confirm signal. The bot itself keeps running; only an explicit
-      // stop() (manual, or Take Profit/Stop Loss above) disables it.
+      if (cfg.runMode === 'continuous' && active) {
+        // Continuous mode: a win doesn't end the run — re-fire the same
+        // side immediately instead of dropping back to idle to wait for a
+        // fresh signal. lossStreak was just reset to 0 above, so this
+        // goes out at Ra's base stake; same affordability check as a
+        // martingale re-fire below, kept here too in case the base stake
+        // alone exceeds a badly-depleted balance.
+        const nextStake = raStakeFor(cfg, lossStreakRef.current);
+        const bal = balanceRef.current;
+        if (bal !== null && nextStake > bal + 0.001) {
+          stop('insufficient-funds');
+          return;
+        }
+        setLastBurstOutcome('won');
+        placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
+        return;
+      }
+
+      // Burst mode (default) — go back to watching the digit stream for
+      // the next arm/confirm signal. The bot itself keeps running; only an
+      // explicit stop() (manual, or Take Profit/Stop Loss above) disables
+      // it.
       activeTradeRef.current = null;
       setBurstActive(false);
       setLastBurstOutcome('won');
@@ -616,7 +654,6 @@ export function useRaBot({
     // afford the next martingale stake. If not, stop the whole bot outright
     // (same treatment as Take Profit/Stop Loss above) rather than letting
     // the buy fail against the API.
-    const active = activeTradeRef.current;
     if (active) {
       const nextStake = raStakeFor(cfg, lossStreakRef.current);
       const bal = balanceRef.current;
