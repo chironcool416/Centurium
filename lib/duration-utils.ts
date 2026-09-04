@@ -163,6 +163,23 @@ export function parseCloseTime(closeArr: string[]): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+/**
+ * Formats an elapsed-time span (in ms) as a MM:SS:CS stopwatch readout —
+ * minutes, seconds, centiseconds (hundredths of a second) — e.g. a 44.23s
+ * span renders as "00:44:23". Used for the bot session-duration readouts
+ * shown on the Minerva TP/SL/insufficient-funds dialogs.
+ */
+export function formatSessionDuration(ms: number): string {
+  const safeMs = Math.max(0, ms);
+  const totalCentiseconds = Math.floor(safeMs / 10);
+  const centiseconds = totalCentiseconds % 100;
+  const totalSeconds = Math.floor(totalCentiseconds / 100);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(minutes)}:${pad(seconds)}:${pad(centiseconds)}`;
+}
+
 export function getCloseTimeForDate(data: TradingSymbolData, date: Date): string {
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dayNamePlural = `${dayNames[date.getDay()]}s`;
