@@ -6,11 +6,11 @@
  * homepage; the Centurium emblem blinks/glows on top of it for ~10s, then
  * the whole overlay fades out and unmounts.
  *
- * Same two-layer technique as FaviconIntro, but inverted and in true 3D:
- * the laurel wreath (centurium-orbit-wreath.png) stays perfectly flat and
- * still, while the ring+helmet base (centurium-orbit-base.png) — the
- * "coin" — spins in place on its vertical axis, counterclockwise, as a
- * two-sided flip card (front/back faces of the same logo) so the same
+ * Same two-layer technique as FaviconIntro, but in true 3D: the laurel
+ * wreath (centurium-orbit-wreath.png) and the ring+helmet base
+ * (centurium-orbit-base.png) are fused into one rigid "coin" that spins
+ * together in place on its vertical axis, counterclockwise, as a two-sided
+ * flip card (front/back faces, each stacking base+wreath) so the same
  * emblem reappears on the other side as it turns, looped for the whole
  * hold instead of a fixed cycle count.
  */
@@ -69,6 +69,9 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
         <div className="intro-emblem relative h-72 w-72 select-none sm:h-96 sm:w-96 md:h-[28rem] md:w-[28rem] lg:h-[32rem] lg:w-[32rem]">
           <div className="intro-emblem-coin-scene">
             <div className="intro-emblem-coin">
+              {/* Front face: base beneath, wreath layered on top, both
+                  sharing the identity (unrotated) transform so they appear
+                  and disappear together as the coin turns. */}
               <Image
                 src="/centurium-orbit-base.png"
                 alt="Centurium Capital"
@@ -77,7 +80,23 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
                 className="intro-emblem-coin-face intro-emblem-coin-face-front object-contain"
               />
               <Image
+                src="/centurium-orbit-wreath.png"
+                alt=""
+                fill
+                priority
+                className="intro-emblem-coin-face intro-emblem-coin-face-front object-contain"
+              />
+              {/* Back face: same pair, mirrored via rotateY(180deg) scaleX(-1)
+                  so the reveal reads as "the other side" of one solid coin. */}
+              <Image
                 src="/centurium-orbit-base.png"
+                alt=""
+                fill
+                priority
+                className="intro-emblem-coin-face intro-emblem-coin-face-back object-contain"
+              />
+              <Image
+                src="/centurium-orbit-wreath.png"
                 alt=""
                 fill
                 priority
@@ -85,13 +104,6 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
               />
             </div>
           </div>
-          <Image
-            src="/centurium-orbit-wreath.png"
-            alt=""
-            fill
-            priority
-            className="intro-emblem-wreath"
-          />
         </div>
         <div className="intro-loading-track h-1.5 w-56 rounded-full sm:w-72">
           <div
