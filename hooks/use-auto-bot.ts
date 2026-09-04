@@ -1,50 +1,150 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ProposalInfo, BuyResult } from '@deriv/core';
-import type { OpenPosition } from '@/lib/types';
+import type { ProposalInfo, BuyResult, Tick } from '@deriv/core';
+import type { ContractMode, OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
 
-export type BotPhase =
-  | 'idle'
-  | 'awaiting-proposal'
-  | 'awaiting-buy'
-  | 'awaiting-settlement'
-  | 'stopped-target'
-  | 'stopped-loss'
-  | 'stopped-error';
+/**
+ * Native port of the "Eye of Ra" browser-extension bot logic (previously a
+ * Chrome extension DOM-scraping traderobot.pro) directly into Centurium,
+ * driven by the real live tick stream instead of text-matching a page.
+ *
+ * Detection watches the over4 (digit > 4) / under5 (digit < 5) split, same
+ * as the extension. Execution barrier depends on `tradeType` (see
+ * RaTradeType): Trade 1 (the original, unchanged extension behavior) fires
+ * a confirmed over4 run as "Superior 3" (DIGITOVER, barrier 3) and a
+ * confirmed under5 run as "Inferior 6" (DIGITUNDER, barrier 6); Trade 2
+ * swaps the barrier the other way — over4 → "Superior 6", under5 →
+ * "Inferior 3". Either way, Trend trades the same side that confirmed,
+ * Counter trades the opposite side, Neutral never trades.
+ *
+ * Once a signal fires, Ra doesn't place a single trade and go back to
+ * watching — it opens a "burst": it keeps repeating the same trade
+ * (side/barrier fixed for the whole burst, stake following Ra's own
+ * martingale on losses) back-to-back as each one settles. A loss keeps the
+ * burst going (re-firing the same side at the bumped-up stake); a win ends
+ * the burst there and then, dropping back to `idle` to resume watching the
+ * digit stream for a brand new arm/confirm sequence to open the next burst.
+ *
+ * Take Profit and Stop Loss are plain, whole-run thresholds checked against
+ * the running total P/L (`pnl`, accumulated across every burst) after each
+ * settlement — the moment either is hit, the bot stops outright (same as
+ * calling stop() manually), rather than just ending the current burst.
+ *
+ * Run Mode decides what a *win* does. In 'burst' mode (the original
+ * behavior) a win ends the current burst and Ra drops back to watching the
+ * digit stream for a fresh arm/confirm signal before it trades again. In
+ * 'continuous' mode a win doesn't end anything — Ra just re-fires the same
+ * side straight through, burst after burst back-to-back with no idle
+ * watching in between, until Take Profit or Stop Loss stops the run
+ * outright (or a loss streak makes the next stake unaffordable).
+ */
 
-export interface BotLogEntry {
+export type RaSide = 'over4' | 'under5' | null;
+export type RaTradingMode = 'trend' | 'neutral' | 'counter';
+/** Which barrier pairing a confirmed signal fires at.
+ *  Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
+ *  Trade 2: over4 → Superior 6, under5 → Inferior 3 — same detection,
+ *  wider/inverted execution barrier. Optional on RaBotConfig so existing
+ *  callers (Operations' trade-robot-view.tsx) that don't set it keep
+ *  behaving exactly as Trade 1 always did. */
+export type RaTradeType = 'trade1' | 'trade2';
+/** 'burst' (default): a win ends the current burst and Ra waits for a
+ *  fresh arm/confirm signal before trading again. 'continuous': a win
+ *  keeps the run going — Ra re-fires the same side immediately, with no
+ *  wait, until Take Profit/Stop Loss stops it outright. */
+export type RaRunMode = 'burst' | 'continuous';
+export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null;
+export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
+/** Why the most recently completed burst ended — for a transient UI note.
+ *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
+ *  whole bot (see RaStopReason) rather than just ending a burst, so this is
+ *  only ever a win or a failed trade. */
+export type RaBurstOutcome = 'won' | 'error' | null;
+
+/** Formats a duration in milliseconds as a stopwatch-style
+ *  `MM:SS:CS` string (minutes : seconds : centiseconds) — e.g. a run
+ *  lasting 44.23s renders as `00:44:23`. Used for the "Session Duration"
+ *  line on the Take Profit / Stop Loss / Inadequate Funds cards, timed from
+ *  `start()` to the `stop()` call that ended the run. */
+export function formatRaSessionDuration(ms: number): string {
+  const totalCentiseconds = Math.max(0, Math.floor(ms / 10));
+  const centiseconds = totalCentiseconds % 100;
+  const totalSeconds = Math.floor(totalCentiseconds / 100);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(minutes)}:${pad(seconds)}:${pad(centiseconds)}`;
+}
+
+/** One settled Ra trade, for the Logs tab — same shape/purpose as the
+ *  Martingale bot's BotLogEntry, plus which side/barrier Ra fired.
+ *  `signalSide` and `side`/`barrier` are deliberately separate: in Counter
+ *  mode (or Trend, for symmetry) the side that actually got traded can
+ *  differ from the side whose streak/confirmation triggered it, so a log
+ *  showing only the trade side alone can look wrong on review (e.g. a
+ *  confirmed under5 signal in Counter mode fires an over4-side trade —
+ *  showing just "Over 4 · Superior 3" hides that the signal was Under 5). */
+export interface RaLogEntry {
   id: number;
   time: number;
+  /** The side whose N-run + M-confirmation actually triggered this burst —
+   *  i.e. what Ra detected on the digit stream, independent of Trading Mode. */
+  signalSide: RaSide;
+  /** The side actually traded for this burst (same for every trade within
+   *  it) — equals signalSide in Trend mode, the opposite in Counter mode. */
+  side: RaSide;
+  barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3' | null;
   digit: number | null;
-  /** Full exit price the contract settled at (e.g. 987.07), shown in the
-   *  log alongside the win/loss result. */
   exitSpot: number | null;
   won: boolean;
   stake: number;
   profit: number;
 }
 
-export interface BotConfig {
+export interface RaBotConfig {
+  /** N — consecutive same-side digits required to arm a side. 2-20. */
+  streakCount: number;
+  /** M — consecutive matching digits required, once armed, to fire a trade. 2-20. */
+  confirmationStreak: number;
+  /** Ra's own base stake, entirely separate from the Martingale bot's stake settings. */
   initialStake: number;
-  multiplier: number;
-  /** Number of consecutive losses to absorb at the initial stake before the
-   *  martingale multiplier starts being applied. 0 = multiply from the very
-   *  first loss. */
+  /** Multiplier applied to Ra's stake after a loss, once martingaleStartAfter losses have occurred. */
+  stakeMultiplier: number;
+  /** Consecutive Ra losses before the multiplier starts being applied. 0 = multiply from the first loss. */
   martingaleStartAfter: number;
-  targetProfit: number; // Infinity = no target
-  stopLossAmount: number; // positive number, Infinity = no stop-loss (ignored when stopLossLossCount is finite)
-  /** Stop once this many consecutive losses occur (no intervening win).
-   *  Infinity = disabled (use `stopLossAmount` instead). Checked exactly at
-   *  the loss that reaches the count, so a value of 4 stops after the 4th
-   *  loss in a row, precisely. */
-  stopLossLossCount: number;
+  /** Seconds a side may sit armed without reaching confirmation before the
+   *  arm is abandoned (primary streak + confirm progress wiped, back to
+   *  watching for a fresh N-run). Timer starts the moment a side arms (or
+   *  re-arms on a flip to the opposite side) and is cancelled/restarted
+   *  whenever that happens again. 0 or omitted = no time limit. Optional so
+   *  existing callers (e.g. Operations' trade-robot-view.tsx, which also
+   *  drives this shared hook) keep compiling unchanged — Minerva is
+   *  currently the only panel with a control for it. */
+  armTimeLimitSeconds?: number;
+  tradingMode: RaTradingMode;
+  /** Which barrier pairing to fire at — see RaTradeType above.
+   *  Undefined/omitted behaves exactly as Trade 1 always has. */
+  tradeType?: RaTradeType;
+  /** Take-profit for the whole run: once total P/L (across every burst)
+   *  reaches this, the bot stops outright. 0 = off. */
+  takeProfit: number;
+  /** Stop-loss for the whole run (positive number; stops the bot once total
+   *  P/L <= -this). 0 = off. */
+  stopLoss: number;
+  /** What a win does — see RaRunMode above. Undefined/omitted behaves
+   *  exactly as 'burst' always has, so existing callers (Operations'
+   *  trade-robot-view.tsx) keep compiling and behaving unchanged. */
+  runMode?: RaRunMode;
 }
 
-interface UseAutoBotParams {
+interface UseRaBotParams {
+  currentTick: Tick | null;
   pipSize: number;
   setStake: (value: string) => void;
+  setContractMode: (mode: ContractMode) => void;
+  setSelectedDigit: (digit: number) => void;
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
@@ -52,26 +152,33 @@ interface UseAutoBotParams {
   buyError: string | null;
   clearBuyResult: () => void;
   openPositions: OpenPosition[];
+  /** Current account balance, read live for the insufficient-funds check
+   *  below. Null while unauthenticated/unknown — the check is simply
+   *  skipped in that case (never blocks a burst on missing data). */
+  balance: number | null;
 }
 
-/**
- * Runs a martingale-style digit trading loop entirely client-side, reusing
- * the same proposal/buy machinery as Manual mode:
- *  - places real trades from the start
- *  - absorbs the first `martingaleStartAfter` consecutive losses at the
- *    initial stake, then multiplies the stake by `multiplier` on each loss
- *    beyond that; any win resets both the stake and the loss streak
- *  - stops automatically once cumulative profit reaches `targetProfit`, and
- *    on the loss side either once cumulative loss reaches `stopLossAmount`
- *    or once `stopLossLossCount` consecutive losses occur (no intervening
- *    win) — whichever mode is configured
- *
- * Settlement of real contracts is detected via the live `openPositions`
- * WebSocket stream (proposal_open_contract), not by polling.
- */
-export function useAutoBot({
+const DIGIT_RECORD_SIZE = 30;
+
+function sideOf(digit: number): RaSide {
+  return digit > 4 ? 'over4' : 'under5';
+}
+
+/** Ra's own martingale stake for a given loss streak, mirroring the
+ *  calculation inside `placeTrade` below — factored out so the
+ *  insufficient-funds pre-check can compute "what would the next stake be"
+ *  without duplicating (or drifting from) the real firing logic. */
+function raStakeFor(cfg: RaBotConfig, lossStreak: number): number {
+  const lossesPastGrace = Math.max(0, lossStreak - cfg.martingaleStartAfter);
+  return cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
+}
+
+export function useRaBot({
+  currentTick,
   pipSize,
   setStake,
+  setContractMode,
+  setSelectedDigit,
   proposal,
   isProposalLoading,
   buyContract,
@@ -79,68 +186,383 @@ export function useAutoBot({
   buyError,
   clearBuyResult,
   openPositions,
-}: UseAutoBotParams) {
-  const [phase, setPhase] = useState<BotPhase>('idle');
+  balance,
+}: UseRaBotParams) {
+  const [enabled, setEnabled] = useState(false);
+  const [phase, setPhase] = useState<RaPhase>('idle');
   const [pnl, setPnl] = useState(0);
-  const [log, setLog] = useState<BotLogEntry[]>([]);
-  const [currentStake, setCurrentStake] = useState(0);
-
-  const cfgRef = useRef<BotConfig>({
-    initialStake: 1,
-    multiplier: 2,
-    martingaleStartAfter: 0,
-    targetProfit: Infinity,
-    stopLossAmount: Infinity,
-    stopLossLossCount: Infinity,
-  });
-  const stakeAmountRef = useRef(1);
-  const consecutiveLossesRef = useRef(0);
-  const pendingContractIdRef = useRef<number | null>(null);
+  const [digitRecord, setDigitRecord] = useState<number[]>([]);
+  const [stoppedReason, setStoppedReason] = useState<RaStopReason>(null);
+  const [armedSide, setArmedSide] = useState<RaSide>(null);
+  const [confirmProgress, setConfirmProgress] = useState(0);
+  const [lastFired, setLastFired] = useState<{
+    side: RaSide;
+    barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3';
+  } | null>(null);
+  // Whether Ra is currently mid-burst (has fired and is looping trades
+  // toward this burst's TP/SL) as opposed to idle and watching for a signal.
+  const [burstActive, setBurstActive] = useState(false);
+  // Cumulative P/L for the *current* burst only — resets to 0 each time a
+  // new burst opens. `pnl` above keeps accumulating across every burst for
+  // the whole run, same as before.
+  const [burstPnl, setBurstPnl] = useState(0);
+  const [lastBurstOutcome, setLastBurstOutcome] = useState<RaBurstOutcome>(null);
+  const [log, setLog] = useState<RaLogEntry[]>([]);
   const logIdRef = useRef(0);
+  // Wall-clock timestamp of the most recent start(), and how long the run
+  // that just ended lasted — from start() to the stop() that closed it out
+  // (manual, Take Profit, Stop Loss, or insufficient-funds alike). Surfaced
+  // as `sessionDurationMs` so the UI can show "Session Duration" on the
+  // TP/SL/Inadequate Funds cards.
+  const startedAtRef = useRef<number | null>(null);
+  const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
 
-  const running = phase !== 'idle' && !phase.startsWith('stopped');
+  const cfgRef = useRef<RaBotConfig>({
+    streakCount: 5,
+    confirmationStreak: 5,
+    initialStake: 1,
+    stakeMultiplier: 1,
+    martingaleStartAfter: 0,
+    armTimeLimitSeconds: 0,
+    tradingMode: 'neutral',
+    takeProfit: 0,
+    stopLoss: 0,
+  });
+  // Running total P/L across the whole run — mirrors `pnl` state but usable
+  // synchronously inside the settlement effect, so the Take Profit/Stop
+  // Loss check below sees the value from the trade that just settled
+  // rather than a render behind.
+  const pnlRef = useRef(0);
+  // Running P/L for the current burst — mirrors `burstPnl` state but usable
+  // synchronously inside the settlement effect. Purely informational now
+  // (shown live in the status badge); it no longer decides anything.
+  const burstPnlRef = useRef(0);
+  // The trade Ra is currently looping within a burst — fixed for the whole
+  // burst so each subsequent trade re-fires the same side/barrier without
+  // needing the arm/confirm streaks to complete again.
+  const activeTradeRef = useRef<{
+    side: RaSide;
+    /** The signal side that triggered this burst — see RaLogEntry.signalSide
+     *  for why this is tracked separately from `side`. Fixed for the whole
+     *  burst, same as `side`. */
+    signalSide: RaSide;
+    contractMode: ContractMode;
+    selectedDigit: number;
+    barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3';
+    stake: number;
+  } | null>(null);
 
-  const pushLog = useCallback((entry: Omit<BotLogEntry, 'id' | 'time'>) => {
+  const armedSideRef = useRef<RaSide>(null);
+  const primaryStreakRef = useRef<{ side: RaSide; count: number }>({ side: null, count: 0 });
+  const confirmCountRef = useRef(0);
+  // Wall-clock timer for the ARM Time Limit: started fresh whenever a side
+  // newly arms or flips to the opposite side, cleared/restarted on the next
+  // arm/flip, and cleared outright when a burst fires or the arm is
+  // abandoned. Deliberately a real setTimeout (wall-clock) rather than
+  // something derived from tick counting, since ticks can slow down or
+  // stop arriving — the limit is "N seconds", not "N ticks".
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastProcessedEpochRef = useRef<number | null>(null);
+  const pendingContractIdRef = useRef<number | null>(null);
+  // Ra's own consecutive-loss counter, driving its own stake martingale.
+  // Entirely separate from the Martingale bot's loss tracking in
+  // use-auto-bot.ts — Ra never reads or writes that bot's state.
+  const lossStreakRef = useRef(0);
+  // Mirrors the `balance` prop in a ref so the settlement effect can read
+  // the live value synchronously when deciding whether the next martingale
+  // stake is affordable, without needing `balance` in that effect's
+  // dependency array.
+  const balanceRef = useRef<number | null>(balance);
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
+  // Guards against buying a stale proposal left over from before we changed
+  // contractMode/selectedDigit: setContractMode/setSelectedDigit and the
+  // phase flip to 'awaiting-proposal' happen in the same tick, but the old
+  // proposal (for the previous contract type/barrier) isn't cleared until a
+  // separate hook's effect runs — which can land one render later. Without
+  // this guard, the "proposal ready" check below can see that stale
+  // leftover proposal as truthy and buy it immediately, which the API then
+  // rejects (or worse, silently buys the wrong contract). Requiring an
+  // observed isProposalLoading=true first proves the old proposal was
+  // actually cleared before we accept a new one.
+  const sawProposalLoadingRef = useRef(false);
+  // Fingerprint (contractMode+selectedDigit+stake) of the last trade Ra
+  // actually requested. When a repeat trade inside a burst asks for the
+  // exact same contract/barrier/stake as last time (very common: same side
+  // all burst, and a win resets the stake right back to the base amount),
+  // useProposal's subscription params never change, so it never
+  // re-subscribes and isProposalLoading never pulses true→false. Without
+  // this, the sawProposalLoadingRef gate below would wait forever for a
+  // loading pulse that's never coming, and the burst would silently freeze
+  // in 'awaiting-proposal'. When the fingerprint matches, the already-live
+  // `proposal` is guaranteed fresh for these exact params, so we skip the
+  // pulse-wait and buy as soon as it's present. Genuinely different params
+  // (barrier flip, martingale stake bump) still go through the safer
+  // pulse-based wait, same as before.
+  const lastFireKeyRef = useRef<string | null>(null);
+  const skipLoadingWaitRef = useRef(false);
+
+  const clearArmTimer = useCallback(() => {
+    if (armTimerRef.current !== null) {
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
+    }
+  }, []);
+
+  // (Re)starts the ARM Time Limit countdown for whichever side just became
+  // armed. Called only on a fresh arm or a flip to the opposite side — an
+  // already-armed side holding its confirmation progress does NOT restart
+  // this, so the countdown genuinely belongs to "this arm", not to every
+  // tick that keeps it alive.
+  const scheduleArmTimer = useCallback(() => {
+    clearArmTimer();
+    const limit = cfgRef.current.armTimeLimitSeconds;
+    if (!limit || limit <= 0) return; // 0 = no time limit
+    armTimerRef.current = setTimeout(() => {
+      // Time's up with no confirmation — abandon this arm entirely (same
+      // shape of reset as a fired burst, minus the trade) and go back to
+      // watching for a fresh N-run.
+      armedSideRef.current = null;
+      primaryStreakRef.current = { side: null, count: 0 };
+      confirmCountRef.current = 0;
+      setArmedSide(null);
+      setConfirmProgress(0);
+      armTimerRef.current = null;
+    }, limit * 1000);
+  }, [clearArmTimer]);
+
+  // Belt-and-suspenders: clear any pending ARM Time Limit timeout if the
+  // component unmounts mid-countdown, so it never fires against stale refs.
+  useEffect(() => {
+    return () => clearArmTimer();
+  }, [clearArmTimer]);
+
+  const resetTracking = useCallback(() => {
+    clearArmTimer();
+    armedSideRef.current = null;
+    primaryStreakRef.current = { side: null, count: 0 };
+    confirmCountRef.current = 0;
+    setArmedSide(null);
+    setConfirmProgress(0);
+  }, [clearArmTimer]);
+
+  const pushLog = useCallback((entry: Omit<RaLogEntry, 'id' | 'time'>) => {
     setLog((prev) => [...prev.slice(-49), { ...entry, id: logIdRef.current++, time: Date.now() }]);
   }, []);
 
   const start = useCallback(
-    (cfg: BotConfig) => {
-      const initialStake = Math.round(cfg.initialStake * 100) / 100;
-      cfgRef.current = { ...cfg, initialStake };
-      stakeAmountRef.current = initialStake;
-      setCurrentStake(initialStake);
-      consecutiveLossesRef.current = 0;
+    (cfg: RaBotConfig) => {
+      cfgRef.current = cfg;
+      pnlRef.current = 0;
+      burstPnlRef.current = 0;
+      activeTradeRef.current = null;
+      resetTracking();
+      lastProcessedEpochRef.current = null;
       pendingContractIdRef.current = null;
+      lossStreakRef.current = 0;
+      lastFireKeyRef.current = null;
+      skipLoadingWaitRef.current = false;
       setPnl(0);
+      setBurstPnl(0);
+      setBurstActive(false);
+      setLastBurstOutcome(null);
       setLog([]);
-      setStake(String(initialStake));
-      setPhase('awaiting-proposal');
+      logIdRef.current = 0;
+      setDigitRecord([]);
+      setStoppedReason(null);
+      setLastFired(null);
+      setPhase('idle');
+      startedAtRef.current = Date.now();
+      setSessionDurationMs(null);
+      setEnabled(true);
     },
-    [setStake]
+    [resetTracking]
   );
 
-  const stop = useCallback(() => {
-    setPhase('idle');
-    pendingContractIdRef.current = null;
-  }, []);
+  const stop = useCallback(
+    (reason: RaStopReason = 'manual') => {
+      clearArmTimer();
+      setEnabled(false);
+      setStoppedReason(reason);
+      setPhase('idle');
+      setBurstActive(false);
+      pendingContractIdRef.current = null;
+      activeTradeRef.current = null;
+      setSessionDurationMs(
+        startedAtRef.current !== null ? Date.now() - startedAtRef.current : null
+      );
+      startedAtRef.current = null;
+    },
+    [clearArmTimer]
+  );
 
-  /** Zeroes the displayed cumulative profit/loss without affecting a run in
-   *  progress — lets the user start a fresh count for a new session. */
-  const resetPnl = useCallback(() => {
-    setPnl(0);
-  }, []);
+  // --- Fires (or re-fires, mid-burst) a single trade for the given side.
+  // Computes the current martingale stake from Ra's own loss streak, sets
+  // the contract mode/barrier, and flips the phase to kick off the
+  // proposal → buy flow. Shared between opening a fresh burst and looping
+  // the same trade again after a loss within it.
+  const placeTrade = useCallback(
+    (side: Exclude<RaSide, null>, signalSide: Exclude<RaSide, null>) => {
+      const cfg = cfgRef.current;
+      const raStake = raStakeFor(cfg, lossStreakRef.current);
+      setStake(raStake.toFixed(2));
 
-  // --- Once a fresh proposal matching the stake we asked for is ready, buy.
+      const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
+      // Trade 1 (default/original): over4 → Superior 3, under5 → Inferior 6.
+      // Trade 2: over4 → Superior 6, under5 → Inferior 3 — same side/contract
+      // mode, wider-or-narrower barrier swapped the other way.
+      const tradeType = cfg.tradeType ?? 'trade1';
+      const selectedDigit =
+        tradeType === 'trade1' ? (side === 'over4' ? 3 : 6) : side === 'over4' ? 6 : 3;
+      const barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3' =
+        tradeType === 'trade1'
+          ? side === 'over4'
+            ? 'Superior 3'
+            : 'Inferior 6'
+          : side === 'over4'
+            ? 'Superior 6'
+            : 'Inferior 3';
+
+      // Same contract/barrier/stake as the last trade we fired? Then
+      // useProposal won't re-subscribe and no loading pulse is coming —
+      // the current proposal is already valid, so don't wait for one.
+      const fireKey = `${contractMode}:${selectedDigit}:${raStake.toFixed(2)}`;
+      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      lastFireKeyRef.current = fireKey;
+
+      activeTradeRef.current = { side, signalSide, contractMode, selectedDigit, barrier, stake: raStake };
+      setContractMode(contractMode);
+      setSelectedDigit(selectedDigit);
+      setLastFired({ side, barrier });
+
+      sawProposalLoadingRef.current = false;
+      setPhase('awaiting-proposal');
+    },
+    [setStake, setContractMode, setSelectedDigit]
+  );
+
+  // --- Process each genuinely new tick: update the digit record, the
+  // primary arm streak, the confirmation streak, and fire a trade signal
+  // when confirmation completes. Tracked incrementally as ticks arrive
+  // (not recomputed from a snapshot window), same as the extension —
+  // tolerance for interruptions depends on the sequence, not just counts.
+  useEffect(() => {
+    if (!enabled || !currentTick) return;
+    if (lastProcessedEpochRef.current === currentTick.epoch) return; // already handled this tick
+    lastProcessedEpochRef.current = currentTick.epoch;
+
+    const digit = getLastDigit(currentTick.quote, pipSize);
+    const side = sideOf(digit);
+    const cfg = cfgRef.current;
+
+    setDigitRecord((prev) => [...prev.slice(-(DIGIT_RECORD_SIZE - 1)), digit]);
+
+    // Primary (arming) streak — strict, resets on any opposite digit.
+    const primary = primaryStreakRef.current;
+    if (primary.side === side) {
+      primary.count += 1;
+    } else {
+      primaryStreakRef.current = { side, count: 1 };
+    }
+
+    // Confirmation streak — only progresses once a side is armed, strict,
+    // resets to 0 (not paused) on any non-matching digit. Clamped at the
+    // target rather than left to grow unbounded once reached — see the
+    // completion block below for why it does *not* reset here.
+    if (armedSideRef.current !== null) {
+      if (side === armedSideRef.current) {
+        confirmCountRef.current = Math.min(confirmCountRef.current + 1, cfg.confirmationStreak);
+      } else {
+        confirmCountRef.current = 0;
+      }
+    }
+
+    // Arm / abandon check — a full N-length run on the *other* side than
+    // what's currently armed drops the old side's confirmation progress
+    // entirely and arms the new side fresh. A run shorter than N on the
+    // opposite side only resets confirmation (handled above) and never
+    // triggers this.
+    if (primaryStreakRef.current.count >= cfg.streakCount) {
+      const streakSide = primaryStreakRef.current.side;
+      if (armedSideRef.current === null) {
+        armedSideRef.current = streakSide;
+        confirmCountRef.current = 0;
+        scheduleArmTimer();
+      } else if (streakSide !== armedSideRef.current) {
+        armedSideRef.current = streakSide;
+        confirmCountRef.current = 0;
+        scheduleArmTimer(); // fresh arm on the new side gets its own countdown
+      }
+      // else: already armed on this side — no change, timer keeps running.
+    }
+
+    setArmedSide(armedSideRef.current);
+    setConfirmProgress(confirmCountRef.current);
+
+    // Confirmation complete — open a new burst (subject to Trading Mode).
+    // This only *opens* the burst with one trade; further trades within the
+    // same burst are fired from the settlement effect below without
+    // re-checking the arm/confirm streaks. On an *actual* fire, the whole
+    // arm state is wiped — armedSide, confirmCount, AND the primary streak —
+    // same as the extension's resetArmState() right before triggerTrade().
+    // That means the next signal (after this burst ends) needs a completely
+    // fresh N-digit primary streak plus its own M-digit confirmation, not
+    // just a fresh M. In Neutral mode, or while an in-flight burst blocks
+    // firing, nothing is reset — the count just holds at the target ("ready
+    // and waiting") instead of silently zeroing out — it still only drops
+    // back to 0 if a genuine opposite-side digit interrupts it (handled
+    // above).
+    if (armedSideRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
+      const confirmedSide = armedSideRef.current;
+
+      if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
+        const tradeSide: Exclude<RaSide, null> =
+          cfg.tradingMode === 'trend'
+            ? (confirmedSide as Exclude<RaSide, null>)
+            : confirmedSide === 'over4'
+              ? 'under5'
+              : 'over4';
+
+        // Open a fresh burst: reset this burst's own running P/L display
+        // before firing the opening trade.
+        burstPnlRef.current = 0;
+        setBurstPnl(0);
+        setBurstActive(true);
+        setLastBurstOutcome(null);
+        placeTrade(tradeSide, confirmedSide as Exclude<RaSide, null>);
+
+        // Full reset — mirrors the extension's resetArmState(): armed
+        // side and primary streak are cleared too, not just confirmCount.
+        // Also cancels the ARM Time Limit countdown — confirmation beat
+        // the clock, so there's nothing left to time out.
+        clearArmTimer();
+        armedSideRef.current = null;
+        primaryStreakRef.current = { side: null, count: 0 };
+        confirmCountRef.current = 0;
+        setArmedSide(null);
+        setConfirmProgress(0);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTick, enabled, pipSize, placeTrade]);
+
+  // --- Once a proposal for the trade type we just set is ready, buy.
+  // Only proceeds once isProposalLoading has been observed true at least
+  // once since firing — see sawProposalLoadingRef above for why.
   useEffect(() => {
     if (phase !== 'awaiting-proposal') return;
-    if (isProposalLoading || !proposal) return;
-    if (Math.abs(proposal.askPrice - stakeAmountRef.current) > 0.01) return; // stale proposal, wait
+    if (isProposalLoading) {
+      sawProposalLoadingRef.current = true;
+      return;
+    }
+    if (!proposal) return;
+    if (!skipLoadingWaitRef.current && !sawProposalLoadingRef.current) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
 
-  // --- Once bought, remember the contract id and wait for it to settle.
+  // --- Once bought, remember the contract id and wait for settlement.
   useEffect(() => {
     if (phase !== 'awaiting-buy') return;
     if (buyResult) {
@@ -148,13 +570,19 @@ export function useAutoBot({
       clearBuyResult();
       setPhase('awaiting-settlement');
     } else if (buyError) {
-      setPhase('stopped-error');
+      // Trade failed to place — end the burst (rather than retrying blindly
+      // or hard-stopping the whole bot) and go back to watching for a fresh
+      // signal to open the next one.
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('error');
+      setPhase('idle');
     }
   }, [phase, buyResult, buyError, clearBuyResult]);
 
-  // --- Watch the live open-positions stream for our contract closing.
+  // --- Watch the live open-positions stream for the pending contract closing.
   useEffect(() => {
-    if (phase !== 'awaiting-settlement' || pendingContractIdRef.current == null) return;
+    if (phase !== 'awaiting-settlement' || pendingContractIdRef.current === null) return;
     const pos = openPositions.find((p) => p.contract_id === pendingContractIdRef.current);
     if (!pos) return;
     const isClosed = !!pos.is_sold || !!pos.is_expired || pos.status !== 'open';
@@ -162,10 +590,11 @@ export function useAutoBot({
 
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
-    // `exit_spot` isn't always populated by the time a short (e.g. 1-tick)
-    // contract first reports as closed — fall back to the last entry in
-    // `tick_stream`, which is filled in live as each tick elapses and is
-    // already relied on elsewhere (chart-markers.ts) for the same reason.
+    pendingContractIdRef.current = null;
+
+    // Exit spot / digit for the log — exit_spot can lag behind is_sold for
+    // short contracts, so fall back to the last tick in tick_stream, same
+    // reasoning/approach as the Martingale bot's log (use-auto-bot.ts).
     const lastStreamTick =
       pos.tick_stream && pos.tick_stream.length > 0
         ? pos.tick_stream[pos.tick_stream.length - 1]
@@ -177,46 +606,111 @@ export function useAutoBot({
           ? lastStreamTick.tick
           : null;
     const exitDigit = exitSpot !== null ? getLastDigit(exitSpot, pipSize) : null;
-    pushLog({ digit: exitDigit, exitSpot, won, stake: stakeAmountRef.current, profit });
-    pendingContractIdRef.current = null;
 
-    setPnl((prevPnl) => {
-      const nextPnl = prevPnl + profit;
-      if (nextPnl >= cfgRef.current.targetProfit) {
-        setPhase('stopped-target');
-        return nextPnl;
-      }
-      // Amount-based stop-loss (ignored when a loss-count stop-loss is configured).
-      if (
-        cfgRef.current.stopLossLossCount === Infinity &&
-        nextPnl <= -cfgRef.current.stopLossAmount
-      ) {
-        setPhase('stopped-loss');
-        return nextPnl;
-      }
-
-      if (won) {
-        consecutiveLossesRef.current = 0;
-        stakeAmountRef.current = cfgRef.current.initialStake;
-      } else {
-        consecutiveLossesRef.current += 1;
-        // Loss-count-based stop-loss: stop exactly at the configured streak length.
-        if (consecutiveLossesRef.current >= cfgRef.current.stopLossLossCount) {
-          setPhase('stopped-loss');
-          return nextPnl;
-        }
-        stakeAmountRef.current =
-          consecutiveLossesRef.current > cfgRef.current.martingaleStartAfter
-            ? Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100
-            : cfgRef.current.initialStake;
-      }
-
-      setCurrentStake(stakeAmountRef.current);
-      setStake(String(stakeAmountRef.current));
-      setPhase('awaiting-proposal');
-      return nextPnl;
+    const tradeInfo = activeTradeRef.current;
+    pushLog({
+      signalSide: tradeInfo?.signalSide ?? null,
+      side: tradeInfo?.side ?? null,
+      barrier: tradeInfo?.barrier ?? null,
+      digit: exitDigit,
+      exitSpot,
+      won,
+      stake: tradeInfo?.stake ?? 0,
+      profit,
     });
-  }, [phase, openPositions, setStake, pipSize, pushLog]);
 
-  return { phase, running, pnl, log, currentStake, start, stop, resetPnl };
+    lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
+
+    // Overall P/L across the whole run — the thing checked against the
+    // whole-run Take Profit/Stop Loss below. Tracked in a ref too so this
+    // effect can read the up-to-date total synchronously, rather than
+    // waiting a render behind the setPnl state update.
+    const nextPnl = pnlRef.current + profit;
+    pnlRef.current = nextPnl;
+    setPnl(nextPnl);
+
+    // This burst's own running P/L — purely informational now, shown live
+    // in the status badge; it no longer decides anything.
+    const nextBurstPnl = burstPnlRef.current + profit;
+    burstPnlRef.current = nextBurstPnl;
+    setBurstPnl(nextBurstPnl);
+
+    const cfg = cfgRef.current;
+    const hitTakeProfit = cfg.takeProfit > 0 && nextPnl >= cfg.takeProfit;
+    const hitStopLoss = cfg.stopLoss > 0 && nextPnl <= -cfg.stopLoss;
+
+    if (hitTakeProfit || hitStopLoss) {
+      // Whole-run target hit — stop the bot outright (same as calling
+      // stop() manually), rather than just ending this burst.
+      stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
+      return;
+    }
+
+    const active = activeTradeRef.current;
+
+    if (won) {
+      if (cfg.runMode === 'continuous' && active) {
+        // Continuous mode: a win doesn't end the run — re-fire the same
+        // side immediately instead of dropping back to idle to wait for a
+        // fresh signal. lossStreak was just reset to 0 above, so this
+        // goes out at Ra's base stake; same affordability check as a
+        // martingale re-fire below, kept here too in case the base stake
+        // alone exceeds a badly-depleted balance.
+        const nextStake = raStakeFor(cfg, lossStreakRef.current);
+        const bal = balanceRef.current;
+        if (bal !== null && nextStake > bal + 0.001) {
+          stop('insufficient-funds');
+          return;
+        }
+        setLastBurstOutcome('won');
+        placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
+        return;
+      }
+
+      // Burst mode (default) — go back to watching the digit stream for
+      // the next arm/confirm signal. The bot itself keeps running; only an
+      // explicit stop() (manual, or Take Profit/Stop Loss above) disables
+      // it.
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('won');
+      setPhase('idle');
+      return;
+    }
+
+    // Lost — before re-firing, check whether the account can actually
+    // afford the next martingale stake. If not, stop the whole bot outright
+    // (same treatment as Take Profit/Stop Loss above) rather than letting
+    // the buy fail against the API.
+    if (active) {
+      const nextStake = raStakeFor(cfg, lossStreakRef.current);
+      const bal = balanceRef.current;
+      if (bal !== null && nextStake > bal + 0.001) {
+        stop('insufficient-funds');
+        return;
+      }
+      placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
+    } else {
+      setPhase('idle');
+    }
+  }, [phase, openPositions, placeTrade, pushLog, stop]);
+
+  return {
+    enabled,
+    running: enabled,
+    phase,
+    pnl,
+    digitRecord,
+    stoppedReason,
+    armedSide,
+    confirmProgress,
+    lastFired,
+    burstActive,
+    burstPnl,
+    lastBurstOutcome,
+    log,
+    sessionDurationMs,
+    start,
+    stop,
+  };
 }
