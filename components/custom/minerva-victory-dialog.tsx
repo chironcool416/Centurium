@@ -10,15 +10,14 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { brandDisplay } from '@/lib/fonts';
+import { formatSessionDuration } from '@/lib/duration-utils';
 
 interface MinervaVictoryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onContinue: () => void;
-  /** Pre-formatted `MM:SS:CS` duration from the run's start() to this
-   *  take-profit stop(). Omitted (e.g. no start was ever recorded) simply
-   *  hides the line. */
-  sessionDuration?: string;
+  /** Wall-clock ms from bot start to this take-profit hit, or null if unknown. */
+  durationMs?: number | null;
 }
 
 /**
@@ -32,7 +31,7 @@ export function MinervaVictoryDialog({
   open,
   onOpenChange,
   onContinue,
-  sessionDuration,
+  durationMs = null,
 }: MinervaVictoryDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,9 +65,14 @@ export function MinervaVictoryDialog({
             <Localize i18n_default_text="Rejoice! You have attained the targeted profit that was set before thee." />
           </DialogDescription>
 
-          {sessionDuration && (
-            <div className="mt-4 rounded-md border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-xs font-semibold tracking-wide text-emerald-200/90">
-              <Localize i18n_default_text="SESSION DURATION" /> {sessionDuration}
+          {durationMs !== null && (
+            <div className="mt-4 flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-950/40 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-200/80">
+              <span>
+                <Localize i18n_default_text="Session Duration" />
+              </span>
+              <span className={`${brandDisplay.className} font-mono text-sm tracking-normal text-emerald-100`}>
+                {formatSessionDuration(durationMs)}
+              </span>
             </div>
           )}
 
