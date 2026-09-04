@@ -164,27 +164,13 @@
   filter: blur(10px);
   animation: favicon-intro-glow-pulse 900ms ease-out both;
 }
-/* Intro splash: the emblem blinks/breathes with a glowing blue halo for a
-   few cycles before the overlay fades out to reveal the homepage. Opacity
-   and the glow's spread/intensity move together so the "blink" reads as the
-   light itself pulsing, not just a fade. */
-@keyframes intro-emblem-flicker {
-  0%,
-  100% {
-    opacity: 0.32;
-    filter: drop-shadow(0 0 6px rgb(59 130 246 / 0.25))
-      drop-shadow(0 0 16px rgb(59 130 246 / 0.15))
-      drop-shadow(0 0 30px rgb(37 99 235 / 0.08));
-  }
-  50% {
-    opacity: 1;
-    filter: drop-shadow(0 0 34px rgb(147 197 253 / 1))
-      drop-shadow(0 0 85px rgb(96 165 250 / 0.75))
-      drop-shadow(0 0 150px rgb(59 130 246 / 0.5));
-  }
-}
+/* Intro splash: the emblem holds a steady ambient glow (no flicker) — all
+   of the intro's motion now comes from the coin's own rotation and its
+   rotation-synced specular glare below, so the emblem itself doesn't pulse
+   independently of the spin. */
 .intro-emblem {
-  animation: intro-emblem-flicker 2s ease-in-out infinite;
+  filter: drop-shadow(0 0 22px rgb(59 130 246 / 0.35))
+    drop-shadow(0 0 48px rgb(37 99 235 / 0.18));
 }
 
 /* Intro splash coin: the laurel wreath (branches) and the ring+helmet base
@@ -224,29 +210,127 @@
     transform: rotateY(-360deg);
   }
 }
-/* Soft ambient bloom sitting behind the emblem, breathing in sync with the
-   flicker above so the whole thing reads as one glowing light source rather
-   than just an outlined image. */
-@keyframes intro-emblem-glow-pulse {
-  0%,
-  100% {
-    opacity: 0.18;
-    transform: scale(0.86);
+
+/* Metallic specular glare: a single soft light streak per face, masked to
+   that face's own artwork (base ring/helmet, laurel wreath) so it only ever
+   lights up actual metal pixels rather than floating over the transparent
+   canvas around them. Its background-position and opacity are keyframed to
+   the exact same 3s/linear timing as the coin's own rotation above, so the
+   sweep is a direct function of orientation rather than an independent
+   animation: brightest and centered when that face is dead-on to the
+   camera (the coin's 0deg / the back face's local 180deg), sliding toward
+   an edge and fading to nothing as the surface turns edge-on — mimicking
+   how a fixed studio light reflects off a curved, polished surface as it
+   turns, rather than a flat glow sitting on top of it. `mix-blend-mode:
+   screen` lets it brighten the metal underneath instead of painting a
+   flat white shape over it. */
+.intro-emblem-coin-glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background-image: linear-gradient(
+    100deg,
+    transparent 0%,
+    transparent 42%,
+    rgb(255 255 255 / 0.85) 50%,
+    transparent 58%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 300% 100%;
+  opacity: 0;
+}
+.intro-emblem-coin-glare-base {
+  -webkit-mask-image: url('/centurium-orbit-base.png');
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-image: url('/centurium-orbit-base.png');
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+.intro-emblem-coin-glare-wreath {
+  -webkit-mask-image: url('/centurium-orbit-wreath.png');
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-image: url('/centurium-orbit-wreath.png');
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+.intro-emblem-coin-glare-front {
+  animation: intro-emblem-glare-front 3s linear infinite;
+}
+.intro-emblem-coin-glare-back {
+  animation: intro-emblem-glare-back 3s linear infinite;
+}
+/* Front face is on-camera for the first/last quarter of the loop (roughly
+   -90deg to +90deg, wrapping across the 100%/0% seam). The streak sweeps
+   through center at the seam (dead-on to camera) and fades out toward each
+   edge as the face turns away. */
+@keyframes intro-emblem-glare-front {
+  0% {
+    background-position: 50% 0;
+    opacity: 0.55;
   }
-  50% {
-    opacity: 1;
-    transform: scale(1.1);
+  12.5% {
+    background-position: 82% 0;
+    opacity: 0.22;
+  }
+  25%,
+  75% {
+    background-position: 100% 0;
+    opacity: 0;
+  }
+  87.5% {
+    background-position: 18% 0;
+    opacity: 0.22;
+  }
+  100% {
+    background-position: 50% 0;
+    opacity: 0.55;
   }
 }
+/* Back face is on-camera for the middle half of the loop (its local 180deg
+   offset means it faces the camera when the coin has turned ~180deg), so
+   its sweep peaks at 50% instead of the 0%/100% seam. */
+@keyframes intro-emblem-glare-back {
+  0%,
+  25%,
+  75%,
+  100% {
+    background-position: 0% 0;
+    opacity: 0;
+  }
+  37.5% {
+    background-position: 18% 0;
+    opacity: 0.22;
+  }
+  50% {
+    background-position: 50% 0;
+    opacity: 0.55;
+  }
+  62.5% {
+    background-position: 82% 0;
+    opacity: 0.22;
+  }
+}
+
+/* Soft ambient bloom sitting behind the emblem — a steady backlight rather
+   than a pulsing one, so the only motion in the scene is the coin's own
+   rotation and its glare (see above). */
 .intro-emblem-glow {
   background: radial-gradient(
     circle,
-    rgb(96 165 250 / 0.55) 0%,
-    rgb(59 130 246 / 0.26) 35%,
+    rgb(96 165 250 / 0.4) 0%,
+    rgb(59 130 246 / 0.2) 35%,
     rgb(59 130 246 / 0) 70%
   );
   filter: blur(12px);
-  animation: intro-emblem-glow-pulse 2s ease-in-out infinite;
+  opacity: 0.55;
 }
 
 /* Take-profit "Victoria Aeterna" celebration modal: dark emerald radial
