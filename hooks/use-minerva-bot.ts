@@ -9,6 +9,7 @@
  */
 export {
   useRaBot as useMinervaBot,
+  formatRaSessionDuration as formatMinervaSessionDuration,
   type RaSide as MinervaSide,
   type RaTradingMode as MinervaTradingMode,
   type RaStopReason as MinervaStopReason,
