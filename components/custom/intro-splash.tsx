@@ -79,6 +79,18 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
                 priority
                 className="intro-emblem-coin-face intro-emblem-coin-face-front object-contain"
               />
+              {/* Specular glare, front: a light streak masked to each
+                  image's own silhouette so it only lights up actual metal
+                  pixels, keyframed on the same 3s/linear clock as the coin
+                  itself — see .intro-emblem-coin-glare-front in custom.css. */}
+              <div
+                aria-hidden
+                className="intro-emblem-coin-face intro-emblem-coin-face-front intro-emblem-coin-glare intro-emblem-coin-glare-base intro-emblem-coin-glare-front"
+              />
+              <div
+                aria-hidden
+                className="intro-emblem-coin-face intro-emblem-coin-face-front intro-emblem-coin-glare intro-emblem-coin-glare-wreath intro-emblem-coin-glare-front"
+              />
               {/* Back face: same pair, mirrored via rotateY(180deg) scaleX(-1)
                   so the reveal reads as "the other side" of one solid coin. */}
               <Image
@@ -94,6 +106,17 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
                 fill
                 priority
                 className="intro-emblem-coin-face intro-emblem-coin-face-back object-contain"
+              />
+              {/* Specular glare, back: same technique, phase-shifted to peak
+                  at the midpoint of the loop when this face is on-camera —
+                  see .intro-emblem-coin-glare-back in custom.css. */}
+              <div
+                aria-hidden
+                className="intro-emblem-coin-face intro-emblem-coin-face-back intro-emblem-coin-glare intro-emblem-coin-glare-base intro-emblem-coin-glare-back"
+              />
+              <div
+                aria-hidden
+                className="intro-emblem-coin-face intro-emblem-coin-face-back intro-emblem-coin-glare intro-emblem-coin-glare-wreath intro-emblem-coin-glare-back"
               />
             </div>
           </div>
