@@ -15,6 +15,10 @@ interface MinervaVictoryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onContinue: () => void;
+  /** Pre-formatted `MM:SS:CS` duration from the run's start() to this
+   *  take-profit stop(). Omitted (e.g. no start was ever recorded) simply
+   *  hides the line. */
+  sessionDuration?: string;
 }
 
 /**
@@ -28,6 +32,7 @@ export function MinervaVictoryDialog({
   open,
   onOpenChange,
   onContinue,
+  sessionDuration,
 }: MinervaVictoryDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,6 +65,12 @@ export function MinervaVictoryDialog({
           <DialogDescription className="mt-3 max-w-sm text-sm leading-relaxed text-emerald-50/90 sm:text-base">
             <Localize i18n_default_text="Rejoice! You have attained the targeted profit that was set before thee." />
           </DialogDescription>
+
+          {sessionDuration && (
+            <div className="mt-4 rounded-md border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-xs font-semibold tracking-wide text-emerald-200/90">
+              <Localize i18n_default_text="SESSION DURATION" /> {sessionDuration}
+            </div>
+          )}
 
           <Button
             onClick={onContinue}
