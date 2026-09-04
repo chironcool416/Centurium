@@ -6,7 +6,8 @@
  * homepage's `IntroSplash`, but held for 8s instead of 10s, re-themed
  * bronze/gold to match the Automaton Minerva emblem, and with no dark scrim
  * behind it — the emblem PNG is already transparent, so it glows directly
- * over the page's own background.
+ * over the page's own background. Always plays at full length, regardless
+ * of the visitor's OS/browser reduce-motion preference.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -14,12 +15,10 @@ import Image from 'next/image';
 
 const FLICKER_DURATION_MS = 8_000;
 const FADE_OUT_MS = 800;
-// Respect prefers-reduced-motion: skip the flicker, just hold + fade quickly.
-const REDUCED_MOTION_DURATION_MS = 2_000;
 
 export function MinervaSplash({ onFinished }: { onFinished: () => void }) {
   const [fadingOut, setFadingOut] = useState(false);
-  const [holdDuration, setHoldDuration] = useState(FLICKER_DURATION_MS);
+  const holdDuration = FLICKER_DURATION_MS;
 
   // The Minerva page re-renders constantly (live WS ticks, balance updates),
   // which would otherwise recreate `onFinished` every render. Stashing it in
@@ -31,13 +30,7 @@ export function MinervaSplash({ onFinished }: { onFinished: () => void }) {
   }, [onFinished]);
 
   useEffect(() => {
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const duration = prefersReducedMotion
-      ? REDUCED_MOTION_DURATION_MS
-      : FLICKER_DURATION_MS;
-    setHoldDuration(duration);
+    const duration = FLICKER_DURATION_MS;
 
     const fadeTimer = setTimeout(() => setFadingOut(true), duration);
     const doneTimer = setTimeout(() => onFinishedRef.current(), duration + FADE_OUT_MS);
