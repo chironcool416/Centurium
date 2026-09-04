@@ -6,10 +6,11 @@
  * homepage; the Centurium emblem blinks/glows on top of it for ~10s, then
  * the whole overlay fades out and unmounts.
  *
- * Same two-layer orbit technique as FaviconIntro: the ring+helmet
- * (centurium-orbit-base.png) stay perfectly still while the laurel wreath
- * (centurium-orbit-wreath.png) spins around the shared center, looped for
- * the whole hold instead of a fixed cycle count.
+ * Same two-layer technique as FaviconIntro, but inverted: the laurel wreath
+ * (centurium-orbit-wreath.png) now stays perfectly still while the ring+
+ * helmet base (centurium-orbit-base.png) — the "coin" — spins in place on
+ * its own center, counterclockwise, looped for the whole hold instead of a
+ * fixed cycle count.
  */
 
 import { useEffect, useState } from 'react';
@@ -69,7 +70,7 @@ export function IntroSplash({ onFinished }: { onFinished: () => void }) {
             alt="Centurium Capital"
             fill
             priority
-            className="object-contain"
+            className="intro-emblem-base"
           />
           <Image
             src="/centurium-orbit-wreath.png"
