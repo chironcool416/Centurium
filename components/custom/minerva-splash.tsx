@@ -3,7 +3,7 @@
 /**
  * Full-screen intro splash shown once when the Minerva page mounts, before
  * the MinervaView panel appears. Same flicker/glow technique as the
- * homepage's `IntroSplash`, but held for 20s instead of 10s, re-themed
+ * homepage's `IntroSplash`, but held for 8s instead of 10s, re-themed
  * bronze/gold to match the Automaton Minerva emblem, and with no dark scrim
  * behind it — the emblem PNG is already transparent, so it glows directly
  * over the page's own background.
@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 
-const FLICKER_DURATION_MS = 20_000;
+const FLICKER_DURATION_MS = 8_000;
 const FADE_OUT_MS = 800;
 // Respect prefers-reduced-motion: skip the flicker, just hold + fade quickly.
 const REDUCED_MOTION_DURATION_MS = 2_000;
