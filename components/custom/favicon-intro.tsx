@@ -10,7 +10,9 @@
  *
  * The soldier stays perfectly still while the wreath completes three full
  * 360° rotations over 6s (one every 2s, ease-in-out), landing back exactly
- * on its starting position — then the whole overlay fades out.
+ * on its starting position — then the whole overlay fades out. Always
+ * plays at full length, regardless of the visitor's OS/browser
+ * reduce-motion preference.
  */
 
 import { useEffect, useState } from 'react';
@@ -18,18 +20,12 @@ import Image from 'next/image';
 
 const HOLD_DURATION_MS = 6_000;
 const FADE_OUT_MS = 500;
-const REDUCED_MOTION_DURATION_MS = 1_200;
 
 export function FaviconIntro({ onFinished }: { onFinished: () => void }) {
   const [fadingOut, setFadingOut] = useState(false);
 
   useEffect(() => {
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const duration = prefersReducedMotion
-      ? REDUCED_MOTION_DURATION_MS
-      : HOLD_DURATION_MS;
+    const duration = HOLD_DURATION_MS;
 
     const fadeTimer = setTimeout(() => setFadingOut(true), duration);
     const doneTimer = setTimeout(() => onFinished(), duration + FADE_OUT_MS);
