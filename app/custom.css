@@ -208,19 +208,33 @@
   }
 }
 
-/* Intro splash wreath: same orbiting technique as favicon-intro-wreath
-   (base stays still, laurel branches spin around the shared center), but
-   looped for the full ~10s hold instead of a fixed 3-cycle count, since the
-   hold duration here varies with prefers-reduced-motion. */
-.intro-emblem-wreath {
+/* Intro splash orbit: the laurel wreath (branches) now stays perfectly
+   still; the base ring+helmet emblem — the "coin" — spins in place on its
+   own center instead, counterclockwise, for the full ~10s hold (looped
+   indefinitely since the hold duration varies with prefers-reduced-motion).
+   Linear timing (not eased) so the spin reads as one constant, un-stuttering
+   rotation rather than the accelerate/decelerate "orbit" feel used
+   elsewhere (e.g. favicon-intro-orbit). */
+.intro-emblem-base {
   object-fit: contain;
-  animation: favicon-intro-orbit 2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: intro-emblem-spin-ccw 3s linear infinite;
   transform-origin: 50% 50%;
 }
+@keyframes intro-emblem-spin-ccw {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .intro-emblem-wreath {
+  .intro-emblem-base {
     animation: none;
   }
+}
+.intro-emblem-wreath {
+  object-fit: contain;
 }
 
 /* Soft ambient bloom sitting behind the emblem, breathing in sync with the
