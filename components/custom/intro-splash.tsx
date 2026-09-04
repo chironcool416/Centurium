@@ -12,7 +12,8 @@
  * together in place on its vertical axis, counterclockwise, as a two-sided
  * flip card (front/back faces, each stacking base+wreath) so the same
  * emblem reappears on the other side as it turns, looped for the whole
- * hold instead of a fixed cycle count.
+ * hold instead of a fixed cycle count. Always plays at full length,
+ * regardless of the visitor's OS/browser reduce-motion preference.
  */
 
 import { useEffect, useState } from 'react';
@@ -20,21 +21,13 @@ import Image from 'next/image';
 
 const FLICKER_DURATION_MS = 10_000;
 const FADE_OUT_MS = 800;
-// Respect prefers-reduced-motion: skip the flicker, just hold + fade quickly.
-const REDUCED_MOTION_DURATION_MS = 2_000;
 
 export function IntroSplash({ onFinished }: { onFinished: () => void }) {
   const [fadingOut, setFadingOut] = useState(false);
-  const [holdDuration, setHoldDuration] = useState(FLICKER_DURATION_MS);
+  const holdDuration = FLICKER_DURATION_MS;
 
   useEffect(() => {
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const duration = prefersReducedMotion
-      ? REDUCED_MOTION_DURATION_MS
-      : FLICKER_DURATION_MS;
-    setHoldDuration(duration);
+    const duration = FLICKER_DURATION_MS;
 
     const fadeTimer = setTimeout(() => setFadingOut(true), duration);
     const doneTimer = setTimeout(() => onFinished(), duration + FADE_OUT_MS);
