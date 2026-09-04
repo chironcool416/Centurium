@@ -1,92 +1,48 @@
-'use client';
-
-/**
- * Full-screen intro splash shown once when the homepage mounts, before the
- * Digits/Robot panels appear. Reuses the same hero background as the
- * homepage; the Centurium emblem blinks/glows on top of it for ~10s, then
- * the whole overlay fades out and unmounts.
- *
- * Same two-layer technique as FaviconIntro, but inverted: the laurel wreath
- * (centurium-orbit-wreath.png) now stays perfectly still while the ring+
- * helmet base (centurium-orbit-base.png) — the "coin" — spins in place on
- * its own center, counterclockwise, looped for the whole hold instead of a
- * fixed cycle count.
- */
-
-import { useEffect, useState } from 'react';
-import Image from 'next/image';
-
-const FLICKER_DURATION_MS = 10_000;
-const FADE_OUT_MS = 800;
-// Respect prefers-reduced-motion: skip the flicker, just hold + fade quickly.
-const REDUCED_MOTION_DURATION_MS = 2_000;
-
-export function IntroSplash({ onFinished }: { onFinished: () => void }) {
-  const [fadingOut, setFadingOut] = useState(false);
-  const [holdDuration, setHoldDuration] = useState(FLICKER_DURATION_MS);
-
-  useEffect(() => {
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const duration = prefersReducedMotion
-      ? REDUCED_MOTION_DURATION_MS
-      : FLICKER_DURATION_MS;
-    setHoldDuration(duration);
-
-    const fadeTimer = setTimeout(() => setFadingOut(true), duration);
-    const doneTimer = setTimeout(() => onFinished(), duration + FADE_OUT_MS);
-
-    return () => {
-      clearTimeout(fadeTimer);
-      clearTimeout(doneTimer);
-    };
-  }, [onFinished]);
-
-  return (
-    <div
-      role="presentation"
-      className={`fixed inset-0 z-[100] flex items-center justify-center transition-opacity ease-out ${
-        fadingOut ? 'opacity-0' : 'opacity-100'
-      }`}
-      style={{ transitionDuration: `${FADE_OUT_MS}ms` }}
-    >
-      {/* Background sits on its own heavily blurred/scaled layer so the
-          hero photo's own emblem and text read as an out-of-focus backdrop
-          rather than a second logo competing with the orbit emblem above. */}
-      <div
-        aria-hidden
-        className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl"
-        style={{ backgroundImage: "url('/hero-bg.jpg')" }}
-      />
-      {/* Near-black scrim so the background photo all but disappears,
-          letting the emblem's glow read as the only light source. */}
-      <div className="absolute inset-0 bg-black/95" />
-      <div className="intro-emblem-glow absolute h-[70vmin] w-[70vmin] rounded-full" />
-      <div className="relative flex flex-col items-center gap-8">
-        <div className="intro-emblem relative h-72 w-72 select-none sm:h-96 sm:w-96 md:h-[28rem] md:w-[28rem] lg:h-[32rem] lg:w-[32rem]">
-          <Image
-            src="/centurium-orbit-base.png"
-            alt="Centurium Capital"
-            fill
-            priority
-            className="intro-emblem-base"
-          />
-          <Image
-            src="/centurium-orbit-wreath.png"
-            alt=""
-            fill
-            priority
-            className="intro-emblem-wreath"
-          />
-        </div>
-        <div className="intro-loading-track h-1.5 w-56 rounded-full sm:w-72">
-          <div
-            className="intro-loading-fill rounded-full"
-            style={{ animationDuration: `${holdDuration}ms` }}
-          />
-        </div>
-      </div>
-    </div>
-  );
+/* Intro splash coin: the laurel wreath (branches) stays perfectly flat and
+   still; the base ring+helmet emblem — the "coin" — spins in place in true
+   3D on its vertical axis, counterclockwise, for the full ~10s hold (looped
+   indefinitely since the hold duration varies with prefers-reduced-motion).
+   Built as a two-sided flip card (front + back faces, each the same logo,
+   each hidden via backface-visibility while facing away) rather than a flat
+   2D rotation, so as the coin turns edge-on and keeps going, the same logo
+   reappears on "the other side" instead of just spinning flat in the
+   picture plane. Linear timing (not eased) so the spin reads as one
+   constant, un-stuttering rotation. */
+.intro-emblem-coin-scene {
+  position: absolute;
+  inset: 0;
+  perspective: 1600px;
+}
+.intro-emblem-coin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transform-origin: 50% 50%;
+  animation: intro-emblem-spin-3d 3s linear infinite;
+}
+.intro-emblem-coin-face {
+  backface-visibility: hidden;
+}
+.intro-emblem-coin-face-back {
+  /* Pre-mirrored so that once the coin has turned enough to show this face
+     to the viewer, the logo reads right-way-round instead of as a mirror
+     image of the front. */
+  transform: rotateY(180deg) scaleX(-1);
+}
+@keyframes intro-emblem-spin-3d {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(-360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .intro-emblem-coin {
+    animation: none;
+  }
+}
+.intro-emblem-wreath {
+  object-fit: contain;
 }
