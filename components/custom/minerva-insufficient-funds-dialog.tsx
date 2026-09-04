@@ -15,6 +15,10 @@ interface MinervaInsufficientFundsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onContinue: () => void;
+  /** Pre-formatted `MM:SS:CS` duration from the run's start() to this
+   *  insufficient-funds stop(). Omitted (e.g. no start was ever recorded)
+   *  simply hides the line. */
+  sessionDuration?: string;
 }
 
 /**
@@ -29,6 +33,7 @@ export function MinervaInsufficientFundsDialog({
   open,
   onOpenChange,
   onContinue,
+  sessionDuration,
 }: MinervaInsufficientFundsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,6 +66,12 @@ export function MinervaInsufficientFundsDialog({
           <DialogDescription className="mt-3 max-w-sm text-sm leading-relaxed text-amber-50/90 sm:text-base">
             <Localize i18n_default_text="Insufficient gold remains to carry forth this operation." />
           </DialogDescription>
+
+          {sessionDuration && (
+            <div className="mt-4 rounded-md border border-amber-600/30 bg-amber-950/30 px-3 py-1.5 text-xs font-semibold tracking-wide text-amber-200/90">
+              <Localize i18n_default_text="SESSION DURATION" /> {sessionDuration}
+            </div>
+          )}
 
           <Button
             onClick={onContinue}
