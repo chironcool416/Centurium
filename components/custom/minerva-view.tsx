@@ -25,6 +25,7 @@ import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import {
   useMinervaBot,
+  formatMinervaSessionDuration,
   type MinervaPhase,
   type MinervaTradingMode,
   type MinervaTradeType,
@@ -791,6 +792,14 @@ export function MinervaView({
   // header status line show.
   const activeBotRunning = raBot.running;
 
+  // "SESSION DURATION 00:44:23" line on the TP/SL/Inadequate Funds cards —
+  // formatted once here so all three dialogs share the same string for the
+  // run that just ended. Undefined (never started) simply hides the line.
+  const minervaSessionDuration =
+    raBot.sessionDurationMs !== null
+      ? formatMinervaSessionDuration(raBot.sessionDurationMs)
+      : undefined;
+
   // Celebration/defeat/insufficient-funds modals — same pattern as
   // Operations' trade-robot-view.tsx: each opens the moment the bot's
   // stopped reason matches, independent of that reason so the user can
@@ -867,16 +876,19 @@ export function MinervaView({
       open={minervaVictoryOpen}
       onOpenChange={setMinervaVictoryOpen}
       onContinue={() => setMinervaVictoryOpen(false)}
+      sessionDuration={minervaSessionDuration}
     />
     <MinervaDefeatDialog
       open={minervaDefeatOpen}
       onOpenChange={setMinervaDefeatOpen}
       onContinue={() => setMinervaDefeatOpen(false)}
+      sessionDuration={minervaSessionDuration}
     />
     <MinervaInsufficientFundsDialog
       open={minervaInsufficientOpen}
       onOpenChange={setMinervaInsufficientOpen}
       onContinue={() => setMinervaInsufficientOpen(false)}
+      sessionDuration={minervaSessionDuration}
     />
     <MinervaSettingsProfilesDialog
       open={profilesDialogOpen}
