@@ -194,6 +194,12 @@ export function useRaBot({
   const [lastBurstOutcome, setLastBurstOutcome] = useState<RaBurstOutcome>(null);
   const [log, setLog] = useState<RaLogEntry[]>([]);
   const logIdRef = useRef(0);
+  // Wall-clock timestamp (ms) the current run was started at, captured in
+  // `start()`. Read back in `stop()` to compute how long the run lasted —
+  // surfaced as `sessionDurationMs` for the TP/SL/insufficient-funds
+  // dialogs' "Session Duration" readout.
+  const sessionStartRef = useRef<number | null>(null);
+  const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
 
   const cfgRef = useRef<RaBotConfig>({
     streakCount: 5,
@@ -351,6 +357,8 @@ export function useRaBot({
       setStoppedReason(null);
       setLastFired(null);
       setPhase('idle');
+      sessionStartRef.current = Date.now();
+      setSessionDurationMs(null);
       setEnabled(true);
     },
     [resetTracking]
@@ -365,6 +373,9 @@ export function useRaBot({
       setBurstActive(false);
       pendingContractIdRef.current = null;
       activeTradeRef.current = null;
+      setSessionDurationMs(
+        sessionStartRef.current !== null ? Date.now() - sessionStartRef.current : null
+      );
     },
     [clearArmTimer]
   );
@@ -681,6 +692,7 @@ export function useRaBot({
     burstPnl,
     lastBurstOutcome,
     log,
+    sessionDurationMs,
     start,
     stop,
   };
