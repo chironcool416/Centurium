@@ -208,23 +208,17 @@
   }
 }
 
-/* Intro splash orbit: the laurel wreath (branches) now stays perfectly
-   still; the base ring+helmet emblem — the "coin" — spins in place on its
-   own center instead, counterclockwise, for the full ~10s hold (looped
+/* Intro splash coin: the laurel wreath (branches) and the ring+helmet base
+   are fused into one rigid emblem that spins together in true 3D on its
+   vertical axis, counterclockwise, for the full ~10s hold (looped
    indefinitely since the hold duration varies with prefers-reduced-motion).
-   Linear timing (not eased) so the spin reads as one constant, un-stuttering
-   rotation rather than the accelerate/decelerate "orbit" feel used
-   elsewhere (e.g. favicon-intro-orbit). */
-/* Intro splash coin: the laurel wreath (branches) stays perfectly flat and
-   still; the base ring+helmet emblem — the "coin" — spins in place in true
-   3D on its vertical axis, counterclockwise, for the full ~10s hold (looped
-   indefinitely since the hold duration varies with prefers-reduced-motion).
-   Built as a two-sided flip card (front + back faces, each the same logo,
-   each hidden via backface-visibility while facing away) rather than a flat
-   2D rotation, so as the coin turns edge-on and keeps going, the same logo
-   reappears on "the other side" instead of just spinning flat in the
-   picture plane. Linear timing (not eased) so the spin reads as one
-   constant, un-stuttering rotation. */
+   Built as a two-sided flip card (front + back faces, each stacking the
+   base under the wreath, hidden via backface-visibility while facing away)
+   rather than a flat 2D rotation, so as the coin turns edge-on and keeps
+   going, the same fused emblem reappears on "the other side" instead of
+   just spinning flat in the picture plane, and the wreath never breaks
+   away from the base mid-turn. Linear timing (not eased) so the spin reads
+   as one constant, un-stuttering rotation. */
 .intro-emblem-coin-scene {
   position: absolute;
   inset: 0;
@@ -257,10 +251,6 @@
     animation: none;
   }
 }
-.intro-emblem-wreath {
-  object-fit: contain;
-}
-
 /* Soft ambient bloom sitting behind the emblem, breathing in sync with the
    flicker above so the whole thing reads as one glowing light source rather
    than just an outlined image. */
