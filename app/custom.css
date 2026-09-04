@@ -139,12 +139,6 @@
     transform: rotate(360deg);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .favicon-intro-wreath {
-    animation: none;
-  }
-}
-
 /* Soft white bloom behind the favicon mark for the duration of the intro. */
 @keyframes favicon-intro-glow-pulse {
   0% {
@@ -170,14 +164,6 @@
   filter: blur(10px);
   animation: favicon-intro-glow-pulse 900ms ease-out both;
 }
-@media (prefers-reduced-motion: reduce) {
-  .favicon-intro-glow {
-    animation: none;
-    opacity: 0.4;
-    transform: scale(1);
-  }
-}
-
 /* Intro splash: the emblem blinks/breathes with a glowing blue halo for a
    few cycles before the overlay fades out to reveal the homepage. Opacity
    and the glow's spread/intensity move together so the "blink" reads as the
@@ -200,18 +186,10 @@
 .intro-emblem {
   animation: intro-emblem-flicker 2s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .intro-emblem {
-    animation: none;
-    opacity: 1;
-    filter: drop-shadow(0 0 28px rgb(59 130 246 / 0.55));
-  }
-}
 
 /* Intro splash coin: the laurel wreath (branches) and the ring+helmet base
    are fused into one rigid emblem that spins together in true 3D on its
-   vertical axis, counterclockwise, for the full ~10s hold (looped
-   indefinitely since the hold duration varies with prefers-reduced-motion).
+   vertical axis, counterclockwise, for the full ~10s hold.
    Built as a two-sided flip card (front + back faces, each stacking the
    base under the wreath, hidden via backface-visibility while facing away)
    rather than a flat 2D rotation, so as the coin turns edge-on and keeps
@@ -246,11 +224,6 @@
     transform: rotateY(-360deg);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .intro-emblem-coin {
-    animation: none;
-  }
-}
 /* Soft ambient bloom sitting behind the emblem, breathing in sync with the
    flicker above so the whole thing reads as one glowing light source rather
    than just an outlined image. */
@@ -274,13 +247,6 @@
   );
   filter: blur(12px);
   animation: intro-emblem-glow-pulse 2s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .intro-emblem-glow {
-    animation: none;
-    opacity: 0.6;
-    transform: scale(1);
-  }
 }
 
 /* Take-profit "Victoria Aeterna" celebration modal: dark emerald radial
@@ -450,13 +416,6 @@
 .minerva-emblem {
   animation: minerva-emblem-flicker 2.4s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .minerva-emblem {
-    animation: none;
-    opacity: 1;
-    filter: drop-shadow(0 0 28px rgb(245 158 11 / 0.55));
-  }
-}
 
 @keyframes minerva-emblem-glow-pulse {
   0%,
@@ -479,13 +438,6 @@
   filter: blur(12px);
   animation: minerva-emblem-glow-pulse 2.4s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .minerva-emblem-glow {
-    animation: none;
-    opacity: 0.6;
-    transform: scale(1);
-  }
-}
 
 @keyframes minerva-loading-text-pulse {
   0%,
@@ -499,12 +451,6 @@
 .minerva-loading-text {
   animation: minerva-loading-text-pulse 2.4s ease-in-out infinite;
   text-shadow: 0 0 12px rgb(251 191 36 / 0.6);
-}
-@media (prefers-reduced-motion: reduce) {
-  .minerva-loading-text {
-    animation: none;
-    opacity: 1;
-  }
 }
 
 .minerva-loading-fill {
