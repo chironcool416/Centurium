@@ -24,6 +24,7 @@ import { getSubmarketDisplayName } from '@/lib/active-symbols-display-names';
 import {
   ALERT_WINDOW_OPTIONS,
   type AlertDirection,
+  type AlertMatchMode,
   type AlertWindow,
   type DigitAlertFire,
   type DigitAlertRule,
@@ -32,6 +33,14 @@ import {
 import type { ActiveSymbol } from '@deriv/core';
 
 const SOUND_STORAGE_KEY = 'centurium:digit-alert-sound-enabled';
+
+const DIGIT_PRESETS: { label: string; digits: number[] }[] = [
+  { label: 'Evens', digits: [0, 2, 4, 6, 8] },
+  { label: 'Odds', digits: [1, 3, 5, 7, 9] },
+  { label: 'Low 0-4', digits: [0, 1, 2, 3, 4] },
+  { label: 'High 5-9', digits: [5, 6, 7, 8, 9] },
+  { label: 'All', digits: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] },
+];
 
 /** Short two-tone chime via WebAudio — no audio asset needed. */
 function playChime() {
@@ -69,8 +78,15 @@ function directionLabel(direction: AlertDirection, localize: (t: string) => stri
   }
 }
 
+function digitsLabel(digits: number[]): string {
+  return [...digits].sort((a, b) => a - b).join(', ');
+}
+
 function ruleDescription(rule: DigitAlertRule, localize: (t: string) => string): string {
-  return `${localize('Digit')} ${rule.digit} ${directionLabel(rule.direction, localize)} ${rule.threshold}% (${localize('last')} ${rule.window})`;
+  const digitWord = rule.digits.length > 1 ? localize('Digits') : localize('Digit');
+  const groupWord =
+    rule.digits.length > 1 ? (rule.matchMode === 'all' ? localize('all') : localize('any')) + ' ' : '';
+  return `${digitWord} ${digitsLabel(rule.digits)} ${groupWord}${directionLabel(rule.direction, localize)} ${rule.threshold}% (${localize('last')} ${rule.window})`;
 }
 
 interface DigitAlertsPanelProps {
@@ -104,6 +120,21 @@ function groupBySubmarket(symbols: ActiveSymbol[]): Map<string, SubmarketGroup> 
   return groups;
 }
 
+/** Whether a single digit's live percentage currently breaches a rule's
+ *  condition — shared between the "is this rule breaching" check and the
+ *  per-digit chip coloring below. */
+function digitBreaches(pct: number | undefined, direction: AlertDirection, threshold: number): boolean {
+  if (pct === undefined) return false;
+  switch (direction) {
+    case 'over':
+      return pct > threshold;
+    case 'under':
+      return pct < threshold;
+    case 'equals':
+      return Math.abs(pct - threshold) < 0.05;
+  }
+}
+
 export function DigitAlertsPanel({
   symbols,
   rules,
@@ -119,7 +150,8 @@ export function DigitAlertsPanel({
   const grouped = useMemo(() => groupBySubmarket(symbols), [symbols]);
 
   const [formSymbol, setFormSymbol] = useState<string>('');
-  const [formDigit, setFormDigit] = useState<number>(9);
+  const [formDigits, setFormDigits] = useState<number[]>([9]);
+  const [formMatchMode, setFormMatchMode] = useState<AlertMatchMode>('all');
   const [formDirection, setFormDirection] = useState<AlertDirection>('over');
   const [formThreshold, setFormThreshold] = useState<string>('10');
   const [formWindow, setFormWindow] = useState<AlertWindow>(100);
@@ -152,23 +184,35 @@ export function DigitAlertsPanel({
     const symbolName =
       symbols.find((s) => s.underlying_symbol === lastFire.symbol)?.underlying_symbol_name ??
       lastFire.symbol;
-    toast(`${symbolName}: ${localize('Digit')} ${lastFire.digit} ${directionLabel(lastFire.direction, localize)} ${lastFire.threshold}%`, {
-      description: `${localize('Currently')} ${lastFire.actualPct.toFixed(1)}% (${localize('last')} ${lastFire.window} ${localize('ticks')})`,
-      duration: 10000,
-    });
+    const digitWord = lastFire.digits.length > 1 ? localize('Digits') : localize('Digit');
+    const groupWord =
+      lastFire.digits.length > 1
+        ? (lastFire.matchMode === 'all' ? localize('all') : localize('any')) + ' '
+        : '';
+    const breakdown = lastFire.digits
+      .map((d, i) => `${d}: ${lastFire.actualPcts[i].toFixed(1)}%`)
+      .join('  ');
+    toast(
+      `${symbolName}: ${digitWord} ${digitsLabel(lastFire.digits)} ${groupWord}${directionLabel(lastFire.direction, localize)} ${lastFire.threshold}%`,
+      {
+        description: `${breakdown} (${localize('last')} ${lastFire.window} ${localize('ticks')})`,
+        duration: 10000,
+      }
+    );
     if (soundEnabled) playChime();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastFire]);
 
   const handleAdd = () => {
     const thresholdNum = parseFloat(formThreshold);
-    if (!formSymbol || Number.isNaN(thresholdNum) || thresholdNum < 0 || thresholdNum > 100) {
-      toast.error(localize('Enter a valid symbol and a threshold between 0 and 100.'));
+    if (!formSymbol || formDigits.length === 0 || Number.isNaN(thresholdNum) || thresholdNum < 0 || thresholdNum > 100) {
+      toast.error(localize('Pick a market, at least one digit, and a threshold between 0 and 100.'));
       return;
     }
     addRule({
       symbol: formSymbol,
-      digit: formDigit,
+      digits: formDigits,
+      matchMode: formDigits.length > 1 ? formMatchMode : 'all',
       direction: formDirection,
       threshold: thresholdNum,
       window: formWindow,
@@ -193,47 +237,91 @@ export function DigitAlertsPanel({
           </Button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="space-y-1.5 col-span-2 sm:col-span-1">
-            <Label className="text-xs text-muted-foreground">
-              <Localize i18n_default_text="Market" />
-            </Label>
-            <Select value={formSymbol} onValueChange={setFormSymbol}>
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder={localize('Select a market')} />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from(grouped.entries()).map(([submarket, { displayName, symbols: group }]) => (
-                  <SelectGroup key={submarket}>
-                    <SelectLabel>{displayName}</SelectLabel>
-                    {group.map((symbol) => (
-                      <SelectItem key={symbol.underlying_symbol} value={symbol.underlying_symbol}>
-                        {symbol.underlying_symbol_name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            <Localize i18n_default_text="Market" />
+          </Label>
+          <Select value={formSymbol} onValueChange={setFormSymbol}>
+            <SelectTrigger className="h-9">
+              <SelectValue placeholder={localize('Select a market')} />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from(grouped.entries()).map(([submarket, { displayName, symbols: group }]) => (
+                <SelectGroup key={submarket}>
+                  <SelectLabel>{displayName}</SelectLabel>
+                  {group.map((symbol) => (
+                    <SelectItem key={symbol.underlying_symbol} value={symbol.underlying_symbol}>
+                      {symbol.underlying_symbol_name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-          <div className="space-y-1.5">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">
-              <Localize i18n_default_text="Digit" />
+              <Localize i18n_default_text="Digits (pick one or more)" />
             </Label>
-            <Select value={String(formDigit)} onValueChange={(v) => setFormDigit(parseInt(v, 10))}>
-              <SelectTrigger className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from({ length: 10 }, (_, d) => (
-                  <SelectItem key={d} value={String(d)}>
-                    {d}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex gap-1 flex-wrap justify-end">
+              {DIGIT_PRESETS.map((preset) => (
+                <Button
+                  key={preset.label}
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => setFormDigits(preset.digits)}
+                >
+                  {localize(preset.label)}
+                </Button>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={() => setFormDigits([])}
+              >
+                <Localize i18n_default_text="Clear" />
+              </Button>
+            </div>
           </div>
+          <ToggleGroup
+            type="multiple"
+            value={formDigits.map(String)}
+            onValueChange={(v) => setFormDigits(v.map((d) => parseInt(d, 10)).sort((a, b) => a - b))}
+            className="justify-start flex-wrap"
+          >
+            {Array.from({ length: 10 }, (_, d) => (
+              <ToggleGroupItem key={d} value={String(d)} className="h-9 w-9 p-0 text-sm font-semibold">
+                {d}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {formDigits.length > 1 && (
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">
+                <Localize i18n_default_text="Match" />
+              </Label>
+              <ToggleGroup
+                type="single"
+                value={formMatchMode}
+                onValueChange={(v) => v && setFormMatchMode(v as AlertMatchMode)}
+                className="justify-start"
+              >
+                <ToggleGroupItem value="all" className="h-9 px-2.5 text-xs">
+                  <Localize i18n_default_text="All of them" />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="any" className="h-9 px-2.5 text-xs">
+                  <Localize i18n_default_text="Any of them" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
@@ -271,15 +359,13 @@ export function DigitAlertsPanel({
               className="h-9"
             />
           </div>
-        </div>
 
-        <div className="flex items-end justify-between gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
               <Localize i18n_default_text="Window (last N ticks)" />
             </Label>
             <Select value={String(formWindow)} onValueChange={(v) => setFormWindow(parseInt(v, 10) as AlertWindow)}>
-              <SelectTrigger className="h-9 w-32">
+              <SelectTrigger className="h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -291,7 +377,24 @@ export function DigitAlertsPanel({
               </SelectContent>
             </Select>
           </div>
-          <Button onClick={handleAdd} size="sm">
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {formDigits.length > 1
+              ? localize(
+                  formMatchMode === 'all'
+                    ? 'Fires only once every one of {{digits}} is {{direction}} {{threshold}}%.'
+                    : 'Fires as soon as any of {{digits}} is {{direction}} {{threshold}}%.',
+                  {
+                    digits: digitsLabel(formDigits),
+                    direction: directionLabel(formDirection, localize),
+                    threshold: formThreshold || '0',
+                  }
+                )
+              : localize('Pick more than one digit to require all (or any) of them to breach together.')}
+          </p>
+          <Button onClick={handleAdd} size="sm" className="shrink-0">
             <Localize i18n_default_text="Add alert" />
           </Button>
         </div>
@@ -312,15 +415,10 @@ export function DigitAlertsPanel({
               symbols.find((s) => s.underlying_symbol === rule.symbol)?.underlying_symbol_name ??
               rule.symbol;
             const stream = streams[rule.symbol];
-            const pct = stream?.statsByWindow[rule.window]?.[rule.digit];
+            const pctByDigit = stream?.statsByWindow[rule.window];
+            const flags = rule.digits.map((d) => digitBreaches(pctByDigit?.[d], rule.direction, rule.threshold));
             const isBreaching =
-              rule.enabled &&
-              pct !== undefined &&
-              (rule.direction === 'over'
-                ? pct > rule.threshold
-                : rule.direction === 'under'
-                  ? pct < rule.threshold
-                  : Math.abs(pct - rule.threshold) < 0.05);
+              rule.enabled && (rule.matchMode === 'all' ? flags.every(Boolean) && flags.length > 0 : flags.some(Boolean));
 
             return (
               <div
@@ -346,16 +444,26 @@ export function DigitAlertsPanel({
                       </Badge>
                     )}
                   </div>
+                  {/* Per-digit live readout — most useful once a rule watches more than one digit. */}
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                    {rule.digits.map((d, i) => {
+                      const pct = pctByDigit?.[d];
+                      const breach = flags[i];
+                      return (
+                        <span
+                          key={d}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold tabular-nums',
+                            breach ? 'bg-primary/15 text-primary' : 'bg-muted text-foreground/60'
+                          )}
+                        >
+                          {d}:{pct !== undefined ? `${pct.toFixed(1)}%` : '—'}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span
-                    className={cn(
-                      'font-mono text-xs font-semibold tabular-nums w-12 text-right',
-                      isBreaching ? 'text-primary' : 'text-foreground/70'
-                    )}
-                  >
-                    {pct !== undefined ? `${pct.toFixed(1)}%` : '—'}
-                  </span>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -400,16 +508,17 @@ export function DigitAlertsPanel({
               const symbolName =
                 symbols.find((s) => s.underlying_symbol === fire.symbol)?.underlying_symbol_name ??
                 fire.symbol;
+              const breakdown = fire.digits.map((d, i) => `${d}:${fire.actualPcts[i].toFixed(1)}%`).join(' ');
               return (
                 <div
                   key={fire.id}
-                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-1.5"
+                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-1.5 gap-3"
                 >
                   <span className="text-foreground/80">
                     {new Date(fire.time).toLocaleTimeString()} — <span className="font-semibold">{symbolName}</span>{' '}
-                    {localize('digit')} {fire.digit} {directionLabel(fire.direction, localize)} {fire.threshold}%
+                    {localize('digits')} {digitsLabel(fire.digits)} {directionLabel(fire.direction, localize)} {fire.threshold}%
                   </span>
-                  <span className="font-mono font-semibold tabular-nums">{fire.actualPct.toFixed(1)}%</span>
+                  <span className="font-mono font-semibold tabular-nums shrink-0">{breakdown}</span>
                 </div>
               );
             })}
