@@ -37,12 +37,15 @@ import { MinervaVictoryDialog } from '@/components/custom/minerva-victory-dialog
 import { MinervaDefeatDialog } from '@/components/custom/minerva-defeat-dialog';
 import { MinervaInsufficientFundsDialog } from '@/components/custom/minerva-insufficient-funds-dialog';
 import { MinervaSettingsProfilesDialog } from '@/components/custom/minerva-settings-profiles-dialog';
+import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
+import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
 import type {
   ActiveSymbol,
   Tick,
   DurationLimits,
   ProposalInfo,
   BuyResult,
+  DerivWS,
 } from '@deriv/core';
 import type {
   ContractMode,
@@ -84,7 +87,7 @@ function getDigitTradeTypeOptions(
   ];
 }
 
-type Tab = 'chart' | 'digits' | 'trades' | 'logs';
+type Tab = 'chart' | 'digits' | 'trades' | 'logs' | 'alerts';
 
 export interface MinervaViewProps {
   isConnected: boolean;
@@ -95,6 +98,10 @@ export interface MinervaViewProps {
    *  firing it (see `useRaBot`'s insufficient-funds stop reason). Null
    *  while unauthenticated/unknown, in which case that check is skipped. */
   balance: number | null;
+  /** Shared WS instance — used only by the Alerts tab to run its own
+   *  independent tick subscriptions per watched market, separate from
+   *  whichever symbol is selected for trading below. */
+  ws: DerivWS | null;
 
   symbols: ActiveSymbol[];
   activeSymbol: ActiveSymbol | null;
@@ -555,6 +562,7 @@ export function MinervaView({
   isAuthenticated,
   balanceLabel,
   balance,
+  ws,
   symbols,
   activeSymbol,
   selectSymbol,
@@ -603,6 +611,31 @@ export function MinervaView({
   const isManualOpen = openSide === 'manual';
 
   const [activeTab, setActiveTab] = useState<Tab>('digits');
+
+  // Multi-market digit alerts — deliberately independent of `activeSymbol`
+  // above: each rule opens and maintains its own tick subscription, so a
+  // rule on Vol 100 keeps watching even while this panel is trading Vol 25.
+  const [lastAlertFire, setLastAlertFire] = useState<DigitAlertFire | null>(null);
+  const digitAlerts = useDigitAlerts({
+    ws,
+    isConnected,
+    symbols,
+    onFire: setLastAlertFire,
+  });
+  const breachingAlertCount = useMemo(
+    () =>
+      digitAlerts.rules.filter((rule) => {
+        if (!rule.enabled) return false;
+        const pct = digitAlerts.streams[rule.symbol]?.statsByWindow[rule.window]?.[rule.digit];
+        if (pct === undefined) return false;
+        return rule.direction === 'over'
+          ? pct > rule.threshold
+          : rule.direction === 'under'
+            ? pct < rule.threshold
+            : Math.abs(pct - rule.threshold) < 0.05;
+      }).length,
+    [digitAlerts.rules, digitAlerts.streams]
+  );
   // `prices` already contains the pre-fetched history merged with live ticks
   // (see useTicks), so derive from it directly instead of keeping a separate
   // buffer that would start empty and duplicate/lag the real data.
@@ -1279,19 +1312,25 @@ export function MinervaView({
                 ['digits', localize('Digits')],
                 ['trades', localize('Trades')],
                 ['logs', localize('Logs')],
+                ['alerts', localize('Alerts')],
               ] as [Tab, string][]
             ).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setActiveTab(key)}
                 className={cn(
-                  'pb-2.5 text-sm font-bold border-b-2 -mb-px transition-colors',
+                  'relative pb-2.5 text-sm font-bold border-b-2 -mb-px transition-colors',
                   activeTab === key
                     ? 'border-primary text-foreground'
                     : 'border-transparent text-foreground/70 hover:text-foreground'
                 )}
               >
                 {label}
+                {key === 'alerts' && breachingAlertCount > 0 && (
+                  <span className="absolute -top-1 -right-3 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                    {breachingAlertCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -1359,6 +1398,20 @@ export function MinervaView({
             <div className="py-10 text-center text-sm text-muted-foreground">
               <Localize i18n_default_text="A full price chart isn't wired into this view yet — the live spot and recent ticks are shown on the Digits tab." />
             </div>
+          )}
+
+          {activeTab === 'alerts' && (
+            <DigitAlertsPanel
+              symbols={symbols}
+              rules={digitAlerts.rules}
+              addRule={digitAlerts.addRule}
+              removeRule={digitAlerts.removeRule}
+              toggleRule={digitAlerts.toggleRule}
+              streams={digitAlerts.streams}
+              firedLog={digitAlerts.firedLog}
+              clearFiredLog={digitAlerts.clearFiredLog}
+              lastFire={lastAlertFire}
+            />
           )}
 
           {activeTab === 'trades' && (
