@@ -7,6 +7,20 @@ import { pickDefaultSymbol } from '../utils/pick-default-symbol';
 
 const SYMBOL_PARAM = 'symbol';
 
+/**
+ * Only these markets are shown anywhere `symbols` from this hook is used
+ * (symbol dropdowns, digit alerts, etc). Trim or extend this list to change
+ * what shows up app-wide — order here is also the display order.
+ */
+const ALLOWED_SYMBOLS = ['R_100', 'R_75', 'R_50', 'R_25', 'R_10', 'RDBULL', 'RDBEAR'];
+
+function filterAllowedSymbols(symbols: ActiveSymbol[]): ActiveSymbol[] {
+  const bySymbol = new Map(symbols.map((s) => [s.underlying_symbol, s]));
+  return ALLOWED_SYMBOLS.map((code) => bySymbol.get(code)).filter(
+    (s): s is ActiveSymbol => s !== undefined
+  );
+}
+
 function readSymbolFromUrl(): string | undefined {
   if (typeof window === 'undefined') return undefined;
   return new URLSearchParams(window.location.search).get(SYMBOL_PARAM) ?? undefined;
@@ -96,8 +110,13 @@ export function useActiveSymbols(
           throw new Error('No symbols available');
         }
 
-        setSymbols(allSymbols);
-        const chosen = pickDefaultSymbol(allSymbols, readSymbolFromUrl());
+        const filteredSymbols = filterAllowedSymbols(allSymbols);
+        if (filteredSymbols.length === 0) {
+          throw new Error('No symbols available');
+        }
+
+        setSymbols(filteredSymbols);
+        const chosen = pickDefaultSymbol(filteredSymbols, readSymbolFromUrl());
         setActiveSymbol(chosen);
         writeSymbolToUrl(chosen.underlying_symbol);
 
