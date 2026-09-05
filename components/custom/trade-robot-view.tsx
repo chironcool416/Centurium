@@ -1469,17 +1469,19 @@ export function TradeRobotView({
           )}
 
           {activeTab === 'alerts' && (
-            <DigitAlertsPanel
-              symbols={symbols}
-              rules={digitAlerts.rules}
-              addRule={digitAlerts.addRule}
-              removeRule={digitAlerts.removeRule}
-              toggleRule={digitAlerts.toggleRule}
-              streams={digitAlerts.streams}
-              firedLog={digitAlerts.firedLog}
-              clearFiredLog={digitAlerts.clearFiredLog}
-              lastFire={lastAlertFire}
-            />
+            <div className="max-h-[420px] overflow-y-auto pr-1 -mr-1">
+              <DigitAlertsPanel
+                symbols={symbols}
+                rules={digitAlerts.rules}
+                addRule={digitAlerts.addRule}
+                removeRule={digitAlerts.removeRule}
+                toggleRule={digitAlerts.toggleRule}
+                streams={digitAlerts.streams}
+                firedLog={digitAlerts.firedLog}
+                clearFiredLog={digitAlerts.clearFiredLog}
+                lastFire={lastAlertFire}
+              />
+            </div>
           )}
 
           {activeTab === 'trades' && (
