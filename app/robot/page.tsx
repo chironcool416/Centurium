@@ -58,6 +58,7 @@ export default function RobotPage() {
           isAuthenticated={isAuthenticated}
           balanceLabel={balanceLabel}
           balance={balance}
+          ws={ws}
           symbols={trading.symbols}
           activeSymbol={trading.activeSymbol}
           selectSymbol={trading.selectSymbol}
