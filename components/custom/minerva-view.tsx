@@ -625,14 +625,18 @@ export function MinervaView({
   const breachingAlertCount = useMemo(
     () =>
       digitAlerts.rules.filter((rule) => {
-        if (!rule.enabled) return false;
-        const pct = digitAlerts.streams[rule.symbol]?.statsByWindow[rule.window]?.[rule.digit];
-        if (pct === undefined) return false;
-        return rule.direction === 'over'
-          ? pct > rule.threshold
-          : rule.direction === 'under'
-            ? pct < rule.threshold
-            : Math.abs(pct - rule.threshold) < 0.05;
+        if (!rule.enabled || rule.digits.length === 0) return false;
+        const pctByDigit = digitAlerts.streams[rule.symbol]?.statsByWindow[rule.window];
+        const flags = rule.digits.map((d) => {
+          const pct = pctByDigit?.[d];
+          if (pct === undefined) return false;
+          return rule.direction === 'over'
+            ? pct > rule.threshold
+            : rule.direction === 'under'
+              ? pct < rule.threshold
+              : Math.abs(pct - rule.threshold) < 0.05;
+        });
+        return rule.matchMode === 'all' ? flags.every(Boolean) : flags.some(Boolean);
       }).length,
     [digitAlerts.rules, digitAlerts.streams]
   );
