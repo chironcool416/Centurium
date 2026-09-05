@@ -74,8 +74,14 @@ export interface SymbolStreamInfo {
 }
 
 const MAX_WINDOW = Math.max(...ALERT_WINDOW_OPTIONS);
-const STALE_MS = 20_000;
-const WATCHDOG_INTERVAL_MS = 5_000;
+// Real tick streams update every 1-2s, so anything quieter than this for a
+// watched symbol means the stream died (most likely `forget_all: 'ticks'`
+// from the main trade panel — see the file header comment) rather than the
+// market just being slow. Kept tight, together with a tight watchdog poll,
+// so a dead stream is caught — and rules stop evaluating against frozen
+// data — within a couple of seconds instead of sitting stale for 20s+.
+const STALE_MS = 6_000;
+const WATCHDOG_INTERVAL_MS = 2_000;
 const FIRE_COOLDOWN_MS = 60_000;
 const MAX_FIRED_LOG = 50;
 const RULES_STORAGE_KEY = 'centurium:digit-alert-rules';
@@ -192,6 +198,12 @@ export function useDigitAlerts({ ws, isConnected, symbols, onFire }: UseDigitAle
   const checkRulesForSymbol = useCallback((symbol: string) => {
     const state = streamStateRef.current[symbol];
     if (!state) return;
+    // Never evaluate against a stream that isn't confirmed live — a
+    // 'connecting' stream has no ticks yet, and a 'stale' one is showing
+    // frozen numbers from before the connection dropped. Firing (or
+    // displaying a breach) off either reads as the alert lying about the
+    // real, current percentage.
+    if (state.status !== 'live') return;
     const now = Date.now();
     for (const rule of rulesRef.current) {
       if (rule.symbol !== symbol || !rule.enabled || rule.digits.length === 0) continue;
