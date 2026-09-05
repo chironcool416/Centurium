@@ -69,6 +69,7 @@ export default function MinervaPage() {
           isAuthenticated={isAuthenticated}
           balanceLabel={balanceLabel}
           balance={balance}
+          ws={ws}
           symbols={trading.symbols}
           activeSymbol={trading.activeSymbol}
           selectSymbol={trading.selectSymbol}
