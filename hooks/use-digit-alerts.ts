@@ -27,11 +27,18 @@ import { computeDigitStats, pipSizeFromPip } from '@/lib/digit-stats';
 export type AlertDirection = 'over' | 'under' | 'equals';
 export const ALERT_WINDOW_OPTIONS = [25, 50, 100, 250, 1000] as const;
 export type AlertWindow = (typeof ALERT_WINDOW_OPTIONS)[number];
+/** 'all': every digit in the group must satisfy the condition to fire
+ *  (e.g. "0,2,4,6,8 are ALL over 10%"). 'any': firing as soon as at least
+ *  one of them does (e.g. "any of 0,1,2 goes under 5%"). */
+export type AlertMatchMode = 'all' | 'any';
 
 export interface DigitAlertRule {
   id: string;
   symbol: string;
-  digit: number;
+  /** One or more digits (0-9) this rule watches as a group. A single-digit
+   *  array behaves exactly like the old single-digit rule. */
+  digits: number[];
+  matchMode: AlertMatchMode;
   direction: AlertDirection;
   /** Percent threshold, e.g. 10 for "10%". */
   threshold: number;
@@ -44,10 +51,12 @@ export interface DigitAlertFire {
   id: number;
   ruleId: string;
   symbol: string;
-  digit: number;
+  digits: number[];
+  matchMode: AlertMatchMode;
   direction: AlertDirection;
   threshold: number;
-  actualPct: number;
+  /** Percentage for each entry in `digits`, same order. */
+  actualPcts: number[];
   window: AlertWindow;
   time: number;
 }
@@ -78,7 +87,14 @@ function loadStoredRules(): DigitAlertRule[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed;
+    // Migrate pre-grouped-digit rules (single `digit: number`) into the
+    // current `digits: number[]` + `matchMode` shape, so nobody's saved
+    // alerts silently disappear after this update.
+    return parsed.map((r: Partial<DigitAlertRule> & { digit?: number }) => ({
+      ...r,
+      digits: Array.isArray(r.digits) ? r.digits : typeof r.digit === 'number' ? [r.digit] : [],
+      matchMode: r.matchMode === 'any' ? 'any' : 'all',
+    })) as DigitAlertRule[];
   } catch {
     return [];
   }
@@ -178,12 +194,14 @@ export function useDigitAlerts({ ws, isConnected, symbols, onFire }: UseDigitAle
     if (!state) return;
     const now = Date.now();
     for (const rule of rulesRef.current) {
-      if (rule.symbol !== symbol || !rule.enabled) continue;
+      if (rule.symbol !== symbol || !rule.enabled || rule.digits.length === 0) continue;
       const slice = state.prices.slice(-rule.window);
       if (slice.length === 0) continue;
       const stats = computeDigitStats(slice, state.pipSize);
-      const pct = stats.percentages[rule.digit];
-      if (!breaches(pct, rule.direction, rule.threshold)) continue;
+      const pcts = rule.digits.map((d) => stats.percentages[d]);
+      const flags = pcts.map((pct) => breaches(pct, rule.direction, rule.threshold));
+      const matched = rule.matchMode === 'all' ? flags.every(Boolean) : flags.some(Boolean);
+      if (!matched) continue;
 
       const lastFired = lastFiredAtRef.current[rule.id] ?? 0;
       if (now - lastFired < FIRE_COOLDOWN_MS) continue;
@@ -193,10 +211,11 @@ export function useDigitAlerts({ ws, isConnected, symbols, onFire }: UseDigitAle
         id: ++fireIdRef.current,
         ruleId: rule.id,
         symbol: rule.symbol,
-        digit: rule.digit,
+        digits: rule.digits,
+        matchMode: rule.matchMode,
         direction: rule.direction,
         threshold: rule.threshold,
-        actualPct: pct,
+        actualPcts: pcts,
         window: rule.window,
         time: now,
       };
