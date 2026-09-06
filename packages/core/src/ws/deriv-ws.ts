@@ -9,6 +9,12 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+/** One real API subscription, potentially multiplexed across several callers. */
+interface KeyedSubscription {
+  subscriptionId: string | null;
+  handlers: Set<MessageHandler>;
+}
+
 /**
  * Lightweight WebSocket manager for the Deriv public WS API.
  * Handles connection, reconnection, request/response matching via req_id,
@@ -18,7 +24,15 @@ export class DerivWS {
   private ws: WebSocket | null = null;
   private reqIdCounter = 0;
   private pendingRequests = new Map<number, PendingRequest>();
-  private subscriptionHandlers = new Map<string, MessageHandler>();
+  // Real, in-flight-or-live API subscriptions, keyed by a canonical form of
+  // their request payload (e.g. `ticks=R_100`). Deriv's API rejects a second
+  // `subscribe: 1` for the same thing with an `AlreadySubscribed` error, so
+  // independent callers asking for the same stream (e.g. the trade panel and
+  // the digit-alerts watcher both wanting ticks for the same symbol) share a
+  // single underlying subscription here instead of racing each other.
+  private subscriptionsByKey = new Map<string, KeyedSubscription>();
+  private subscriptionIdToKey = new Map<string, string>();
+  private pendingSubscribes = new Map<string, Promise<{ subscriptionId: string | null }>>();
   private globalHandlers: MessageHandler[] = [];
   private connectionStateHandlers: ConnectionStateHandler[] = [];
   private reconnectExhaustedHandlers: ReconnectExhaustedHandler[] = [];
@@ -107,7 +121,13 @@ export class DerivWS {
       this.ws.onclose = () => {
         this.isConnecting = false;
         this.stopPing();
-        this.subscriptionHandlers.clear();
+        // The server drops every subscription when the socket closes, so
+        // our bookkeeping of "what's live" must be wiped too — otherwise a
+        // future subscribe() for the same payload would think it can
+        // multiplex onto a subscription that no longer exists server-side.
+        this.subscriptionsByKey.clear();
+        this.subscriptionIdToKey.clear();
+        this.pendingSubscribes.clear();
         this.notifyConnectionState(false);
         this.attemptReconnect();
       };
@@ -136,46 +156,92 @@ export class DerivWS {
     });
   }
 
+  /** Stable string for a subscribe payload, independent of key insertion order. */
+  private subscriptionKey(payload: Record<string, unknown>): string {
+    return Object.keys(payload)
+      .sort()
+      .map((k) => `${k}=${JSON.stringify(payload[k])}`)
+      .join('&');
+  }
+
   /**
    * Send a subscription request. The handler is called for every streamed message.
    * Returns a function to unsubscribe.
+   *
+   * If another caller already has an identical subscription open (or in
+   * flight), this multiplexes onto it via a shared `MessageHandler` set
+   * rather than issuing a second `subscribe: 1` for the same thing — the API
+   * rejects duplicates with an `AlreadySubscribed` error, which previously
+   * meant whichever caller lost the race silently stopped receiving updates.
    */
   subscribe(
     payload: Record<string, unknown>,
     handler: MessageHandler
   ): Promise<{ subscriptionId: string | null; unsubscribe: () => void }> {
-    return new Promise((resolve, reject) => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        reject(new Error('WebSocket is not connected'));
-        return;
+    const key = this.subscriptionKey(payload);
+
+    const unsubscribe = () => {
+      const entry = this.subscriptionsByKey.get(key);
+      if (!entry) return;
+      entry.handlers.delete(handler);
+      if (entry.handlers.size > 0) return; // other callers still listening
+      this.subscriptionsByKey.delete(key);
+      if (entry.subscriptionId) {
+        this.subscriptionIdToKey.delete(entry.subscriptionId);
+        this.send({ forget: entry.subscriptionId }).catch(() => {});
       }
+    };
 
-      const reqId = ++this.reqIdCounter;
-      const message = { ...payload, subscribe: 1, req_id: reqId };
+    // Already live — just add this handler to the existing stream.
+    const existing = this.subscriptionsByKey.get(key);
+    if (existing) {
+      existing.handlers.add(handler);
+      return Promise.resolve({ subscriptionId: existing.subscriptionId, unsubscribe });
+    }
 
+    // Already being requested by someone else — wait for it, then join it.
+    const pending = this.pendingSubscribes.get(key);
+    if (pending) {
+      return pending.then(({ subscriptionId }) => {
+        this.subscriptionsByKey.get(key)?.handlers.add(handler);
+        return { subscriptionId, unsubscribe };
+      });
+    }
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('WebSocket is not connected'));
+    }
+
+    const entry: KeyedSubscription = { subscriptionId: null, handlers: new Set([handler]) };
+    this.subscriptionsByKey.set(key, entry);
+
+    const reqId = ++this.reqIdCounter;
+    const message = { ...payload, subscribe: 1, req_id: reqId };
+
+    const promise = new Promise<{ subscriptionId: string | null }>((resolve, reject) => {
       this.pendingRequests.set(reqId, {
         resolve: (data) => {
           const subscriptionId = this.extractSubscriptionId(data);
-          if (subscriptionId) {
-            this.subscriptionHandlers.set(subscriptionId, handler);
-          }
-          // Also call handler with the initial response
-          handler(data);
-          resolve({
-            subscriptionId,
-            unsubscribe: () => {
-              if (subscriptionId) {
-                this.subscriptionHandlers.delete(subscriptionId);
-                this.send({ forget: subscriptionId }).catch(() => {});
-              }
-            },
-          });
+          entry.subscriptionId = subscriptionId;
+          if (subscriptionId) this.subscriptionIdToKey.set(subscriptionId, key);
+          // Deliver the initial response to every handler that joined while
+          // this was in flight, not just the one that triggered the request.
+          for (const h of entry.handlers) h(data);
+          resolve({ subscriptionId });
         },
-        reject,
+        reject: (err) => {
+          this.subscriptionsByKey.delete(key);
+          reject(err);
+        },
       });
-
-      this.ws.send(JSON.stringify(message));
+      this.ws!.send(JSON.stringify(message));
+    }).finally(() => {
+      this.pendingSubscribes.delete(key);
     });
+
+    this.pendingSubscribes.set(key, promise);
+
+    return promise.then(({ subscriptionId }) => ({ subscriptionId, unsubscribe }));
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -197,7 +263,9 @@ export class DerivWS {
       this.ws = null;
     }
     this.pendingRequests.clear();
-    this.subscriptionHandlers.clear();
+    this.subscriptionsByKey.clear();
+    this.subscriptionIdToKey.clear();
+    this.pendingSubscribes.clear();
   }
 
   get isConnected(): boolean {
@@ -222,10 +290,15 @@ export class DerivWS {
       return;
     }
 
-    // Check if this is a subscription stream
+    // Check if this is a subscription stream — fan it out to every handler
+    // multiplexed onto this subscription id.
     const subId = this.extractSubscriptionId(data);
-    if (subId && this.subscriptionHandlers.has(subId)) {
-      this.subscriptionHandlers.get(subId)!(data);
+    if (subId) {
+      const key = this.subscriptionIdToKey.get(subId);
+      const entry = key ? this.subscriptionsByKey.get(key) : undefined;
+      if (entry) {
+        for (const h of entry.handlers) h(data);
+      }
     }
 
     // Resolve pending one-shot request
