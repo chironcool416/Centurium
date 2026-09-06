@@ -103,11 +103,11 @@ export function useTicks(
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
-      // Send forget_all for ticks so the server clears the stream before the
-      // next mount re-subscribes — prevents AlreadySubscribed on navigation.
-      if (ws?.isConnected) {
-        ws.send({ forget_all: 'ticks' }).catch(() => {});
-      }
+      // No forget_all here: DerivWS.subscribe() now multiplexes duplicate
+      // requests for the same symbol onto one real API subscription and
+      // ref-counts unsubscribes, so this hook only ever tears down its own
+      // stream. Broadcasting forget_all would wipe out anyone else's (e.g.
+      // digit-alerts) subscription on the same connection.
     };
   }, [ws, isConnected, activeSymbol, tickCount, pipSizeFromPip]);
 
