@@ -15,12 +15,11 @@ import { computeDigitStats, pipSizeFromPip } from '@/lib/digit-stats';
  * running regardless of what the main trading view is subscribed to or how
  * often the user switches symbols there.
  *
- * One gotcha this has to defend against: `useTicks` (the trade panel's own
- * tick hook) sends `forget_all: 'ticks'` on cleanup — e.g. every time the
- * user switches symbols on the trade panel — which unsubscribes *every*
- * open ticks stream on the connection server-side, including these
- * watcher streams, not just the one the trade panel meant to drop. A
- * watchdog below detects the resulting silence (no tick for STALE_MS) and
+ * `DerivWS.subscribe()` multiplexes duplicate requests for the same symbol
+ * onto one real API subscription (ref-counted), so this can safely watch a
+ * symbol the trade panel also has open without hitting an `AlreadySubscribed`
+ * error from the API. A watchdog below still detects a stream going silent
+ * (no tick for STALE_MS) — e.g. after a raw connection drop — and
  * transparently re-subscribes, so a rule never just quietly goes dark.
  */
 
