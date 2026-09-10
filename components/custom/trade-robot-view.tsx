@@ -499,22 +499,55 @@ function getDifferLastBurstLabel(
 }
 
 /** Small strip of the last digits seen while Differ was on — oldest to
- *  newest, the currently-tracked streak digit highlighted differently from
- *  the rest, newest given a ring. Native equivalent of RaDigitRecord above,
+ *  newest, the digits actually forming the current in-progress pattern
+ *  highlighted (spaced `gap` ticks apart, walking back from the newest
+ *  tick), newest given a ring. Native equivalent of RaDigitRecord above,
  *  keyed on the exact digit rather than the over4/under5 side split. */
-function DifferDigitRecord({ digits, streakDigit }: { digits: number[]; streakDigit: number | null }) {
+function DifferDigitRecord({
+  digits,
+  streakDigit,
+  streakProgress,
+  gap,
+  bannedDigits,
+}: {
+  digits: number[];
+  streakDigit: number | null;
+  streakProgress: number;
+  gap: number;
+  bannedDigits: number[];
+}) {
   if (digits.length === 0) return null;
+
+  // Indices (into `digits`) that are actually part of the in-progress
+  // pattern: walking back from the newest tick in steps of `period`,
+  // for as many steps as the current streak has counted.
+  const period = Math.max(1, gap + 1);
+  const highlighted = new Set<number>();
+  if (streakDigit !== null && streakProgress > 0) {
+    let idx = digits.length - 1;
+    for (let i = 0; i < streakProgress && idx >= 0; i++) {
+      highlighted.add(idx);
+      idx -= period;
+    }
+  }
+  const banned = new Set(bannedDigits);
+
   return (
     <div className="flex flex-wrap gap-1 rounded-md bg-muted/30 p-2">
       {digits.map((d, i) => {
-        const isStreakDigit = streakDigit !== null && d === streakDigit;
+        const isStreakDigit = highlighted.has(i);
+        const isBanned = banned.has(d);
         const isNewest = i === digits.length - 1;
         return (
           <span
             key={i}
             className={cn(
               'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold tabular-nums',
-              isStreakDigit ? 'bg-primary/25 text-primary' : 'bg-muted text-foreground/70',
+              isBanned
+                ? 'bg-muted text-muted-foreground/50 line-through decoration-2'
+                : isStreakDigit
+                  ? 'bg-primary/25 text-primary'
+                  : 'bg-muted text-foreground/70',
               isNewest && 'ring-2 ring-primary'
             )}
           >
@@ -1702,7 +1735,7 @@ export function TradeRobotView({
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="Each repeated digit opens a run that trades that digit continuously (Differ's own martingale on losses) until it wins, then Differ waits for the next repeat. Take Profit and Stop Loss track total profit/loss across every run and stop Differ outright once hit." />
+            <Localize i18n_default_text="Each repeated digit opens a run and trades that digit. A loss benches it and Differ waits for a different repeat instead of retrying the same one, still escalating the martingale stake — until a win on any digit clears the bench and the run ends. Take Profit and Stop Loss track total profit/loss across every run and stop Differ outright once hit." />
           </p>
 
           {(differBot.running || differBot.digitRecord.length > 0) && (
@@ -1718,7 +1751,21 @@ export function TradeRobotView({
                   </span>
                 )}
               </div>
-              <DifferDigitRecord digits={differBot.digitRecord} streakDigit={differBot.streakDigit} />
+              {differBot.bannedDigits.length > 0 && (
+                <p className="text-[11px] text-muted-foreground px-0.5">
+                  <Localize i18n_default_text="Benched (ignored until a different digit wins):" />{' '}
+                  <span className="font-semibold text-foreground/80">
+                    {differBot.bannedDigits.join(', ')}
+                  </span>
+                </p>
+              )}
+              <DifferDigitRecord
+                digits={differBot.digitRecord}
+                streakDigit={differBot.streakDigit}
+                streakProgress={differBot.streakProgress}
+                gap={parseInt(differPatternGap, 10) || 0}
+                bannedDigits={differBot.bannedDigits}
+              />
             </div>
           )}
           </>
