@@ -17,6 +17,15 @@ import { getLastDigit } from '@/lib/digit-stats';
  * martingale on losses) until it wins, then the bot drops back to
  * watching the digit stream for the next N-run. Take Profit/Stop Loss are
  * whole-run thresholds checked after every settlement, same as Ra's.
+ *
+ * `patternGap` generalizes the streak from strictly-consecutive
+ * (gap = 0, e.g. 5,5,5) to evenly-spaced (gap = 1 → 5,x,5,x,5; gap = 2 →
+ * 5,x,x,5,x,x,5; …), where the `x` ticks in between can be anything. This
+ * is tracked with `period = gap + 1` parallel "lanes", one per tick-index
+ * phase mod period — each lane behaves exactly like the old single
+ * consecutive-run counter, just only looking at every `period`-th tick.
+ * gap = 0 collapses to a single lane and is byte-for-byte the old
+ * behaviour.
  */
 
 export type DifferTradeType = 'differs' | 'matches';
@@ -49,9 +58,13 @@ export interface DifferLogEntry {
 }
 
 export interface DifferBotConfig {
-  /** N — how many times the same digit must appear consecutively before
-   *  Differ fires. 2-9. */
+  /** N — how many times the same digit must appear (spaced `patternGap`
+   *  ticks apart, see below) before Differ fires. 2-9. */
   streakLength: number;
+  /** Ticks between each occurrence of N. 0 = consecutive (N,N,N — the
+   *  original behaviour). 1 = every other tick (N,x,N,x,N). 2 = every
+   *  third tick (N,x,x,N,x,x,N). Etc. 0-9. */
+  patternGap: number;
   /** Which contract Differ fires once a streak completes. */
   tradeType: DifferTradeType;
   /** Differ's own base stake, entirely separate from the Martingale/Ra
@@ -140,6 +153,7 @@ export function useDifferBot({
 
   const cfgRef = useRef<DifferBotConfig>({
     streakLength: 3,
+    patternGap: 0,
     tradeType: 'differs',
     initialStake: 1,
     stakeMultiplier: 1,
@@ -158,11 +172,13 @@ export function useDifferBot({
     stake: number;
   } | null>(null);
 
-  // Current in-progress streak on the raw digit stream (not yet fired).
-  const currentStreakRef = useRef<{ digit: number | null; count: number }>({
-    digit: null,
-    count: 0,
-  });
+  // Current in-progress streak(s) on the raw digit stream (not yet fired).
+  // One "lane" per phase of `period` (= patternGap + 1) — lane[i] tracks
+  // the run of ticks whose index ≡ i (mod period). At patternGap 0,
+  // period is 1 and there's exactly one lane, equivalent to the old
+  // single-counter behaviour.
+  const lanesRef = useRef<{ digit: number | null; count: number }[]>([{ digit: null, count: 0 }]);
+  const tickIndexRef = useRef(0);
   const lastProcessedEpochRef = useRef<number | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   // Differ's own consecutive-loss counter, driving its own stake
@@ -181,7 +197,9 @@ export function useDifferBot({
   const skipLoadingWaitRef = useRef(false);
 
   const resetTracking = useCallback(() => {
-    currentStreakRef.current = { digit: null, count: 0 };
+    const period = Math.max(1, cfgRef.current.patternGap + 1);
+    lanesRef.current = Array.from({ length: period }, () => ({ digit: null, count: 0 }));
+    tickIndexRef.current = 0;
     setStreakDigit(null);
     setStreakProgress(0);
   }, []);
@@ -271,23 +289,37 @@ export function useDifferBot({
 
     setDigitRecord((prev) => [...prev.slice(-(DIGIT_RECORD_SIZE - 1)), digit]);
 
-    // Strict consecutive-run counter — resets to 1 on any digit change.
-    const streak = currentStreakRef.current;
-    if (streak.digit === digit) {
-      streak.count += 1;
-    } else {
-      currentStreakRef.current = { digit, count: 1 };
+    // Route this tick to its lane (period = gap + 1 lanes, cycling by tick
+    // index) and run the same consecutive-run counter as before, but only
+    // against that lane's previous value — so a match `period` ticks ago
+    // continues the count, exactly like the old back-to-back check did at
+    // period 1. Resets to 1 on a mismatch within the lane.
+    const period = Math.max(1, cfg.patternGap + 1);
+    if (lanesRef.current.length !== period) {
+      // Config changed mid-flight (shouldn't normally happen since gap is
+      // fixed for a run, but keep this safe) — re-align the lanes.
+      lanesRef.current = Array.from({ length: period }, () => ({ digit: null, count: 0 }));
+      tickIndexRef.current = 0;
     }
+    const laneIndex = tickIndexRef.current % period;
+    tickIndexRef.current += 1;
+    const lane = lanesRef.current[laneIndex];
+    if (lane.digit === digit) {
+      lane.count += 1;
+    } else {
+      lanesRef.current[laneIndex] = { digit, count: 1 };
+    }
+    const activeLane = lanesRef.current[laneIndex];
 
-    setStreakDigit(currentStreakRef.current.digit);
-    setStreakProgress(Math.min(currentStreakRef.current.count, cfg.streakLength));
+    setStreakDigit(activeLane.digit);
+    setStreakProgress(Math.min(activeLane.count, cfg.streakLength));
 
     // Streak complete — open a new burst. Only fires while idle (a burst
     // already in flight loops from the settlement effect below without
-    // re-checking this streak). On an actual fire, the streak tracking is
-    // wiped so the next signal needs a fresh N-run from scratch.
-    if (currentStreakRef.current.count >= cfg.streakLength && phase === 'idle') {
-      const firedDigit = currentStreakRef.current.digit as number;
+    // re-checking this streak). On an actual fire, every lane is wiped so
+    // the next signal needs a fresh N-run from scratch.
+    if (activeLane.count >= cfg.streakLength && phase === 'idle') {
+      const firedDigit = activeLane.digit as number;
 
       burstPnlRef.current = 0;
       setBurstPnl(0);
