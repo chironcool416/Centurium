@@ -27,6 +27,12 @@ import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
 import { useRaBot, type RaPhase, type RaTradingMode, type RaSide, type RaLogEntry } from '@/hooks/use-ra-bot';
+import {
+  useDifferBot,
+  type DifferPhase,
+  type DifferTradeType,
+  type DifferLogEntry,
+} from '@/hooks/use-differ-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
 import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
@@ -147,6 +153,13 @@ interface SavedRobotSettings {
   raTradingMode: RaTradingMode;
   raTakeProfit: string;
   raStopLoss: string;
+  differStreakLength: string;
+  differTradeType: DifferTradeType;
+  differInitialStake: string;
+  differStakeMultiplier: string;
+  differMartingaleAfterLosses: string;
+  differTakeProfit: string;
+  differStopLoss: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -422,6 +435,96 @@ function RaDigitRecord({ digits }: { digits: number[] }) {
   );
 }
 
+function getDifferStatusLabel(
+  phase: DifferPhase,
+  streakDigit: number | null,
+  streakProgress: number,
+  streakLength: string,
+  localize: (t: string) => string,
+  burstActive?: boolean,
+  burstPnl?: number
+): string {
+  switch (phase) {
+    case 'awaiting-proposal':
+    case 'awaiting-buy':
+      return burstActive
+        ? `${localize('Placing trade…')} (${(burstPnl ?? 0) >= 0 ? '+' : ''}${(burstPnl ?? 0).toFixed(2)})`
+        : localize('Placing trade…');
+    case 'awaiting-settlement':
+      return burstActive
+        ? `${localize('Trade running…')} (${(burstPnl ?? 0) >= 0 ? '+' : ''}${(burstPnl ?? 0).toFixed(2)})`
+        : localize('Trade running…');
+    default:
+      if (streakDigit !== null && streakProgress > 0) {
+        return `${localize('Digit')} ${streakDigit} — ${streakProgress}/${streakLength}`;
+      }
+      return localize('Watching…');
+  }
+}
+
+function getDifferStoppedLabel(
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null,
+  localize: (t: string) => string
+): string | null {
+  switch (reason) {
+    case 'manual':
+      return localize('Stopped: Manual');
+    case 'take-profit':
+      return localize('Stopped: Take Profit');
+    case 'stop-loss':
+      return localize('Stopped: Stop Loss');
+    case 'insufficient-funds':
+      return localize('Stopped: Insufficient Funds');
+    default:
+      return null;
+  }
+}
+
+/** Transient note shown while Differ is still running but idle between
+ *  bursts, explaining how the last burst ended before a new streak opens
+ *  the next one. */
+function getDifferLastBurstLabel(
+  outcome: 'won' | 'error' | null,
+  localize: (t: string) => string
+): string | null {
+  switch (outcome) {
+    case 'won':
+      return localize('Last run finished in profit — watching for the next streak.');
+    case 'error':
+      return localize('Last trade failed — watching for the next streak.');
+    default:
+      return null;
+  }
+}
+
+/** Small strip of the last digits seen while Differ was on — oldest to
+ *  newest, the currently-tracked streak digit highlighted differently from
+ *  the rest, newest given a ring. Native equivalent of RaDigitRecord above,
+ *  keyed on the exact digit rather than the over4/under5 side split. */
+function DifferDigitRecord({ digits, streakDigit }: { digits: number[]; streakDigit: number | null }) {
+  if (digits.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1 rounded-md bg-muted/30 p-2">
+      {digits.map((d, i) => {
+        const isStreakDigit = streakDigit !== null && d === streakDigit;
+        const isNewest = i === digits.length - 1;
+        return (
+          <span
+            key={i}
+            className={cn(
+              'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold tabular-nums',
+              isStreakDigit ? 'bg-primary/25 text-primary' : 'bg-muted text-foreground/70',
+              isNewest && 'ring-2 ring-primary'
+            )}
+          >
+            {d}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 type RobotPanelKey = 'settings' | 'analysis' | 'manual';
 
 /**
@@ -660,7 +763,7 @@ export function TradeRobotView({
   // --- Ra mode: which automated strategy the left panel runs. Ra's stake
   // fields are entirely separate from the Martingale bot's (multiplier,
   // martingaleAfterLosses, initialAmount above) — Ra never reads those.
-  const [botMode, setBotMode] = useState<'martingale' | 'ra'>('martingale');
+  const [botMode, setBotMode] = useState<'martingale' | 'ra' | 'differ'>('martingale');
   const [raStreakCount, setRaStreakCount] = useState('5');
   const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
   const [raInitialStake, setRaInitialStake] = useState('1');
@@ -669,6 +772,16 @@ export function TradeRobotView({
   const [raTradingMode, setRaTradingMode] = useState<RaTradingMode>('neutral');
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
+
+  // --- Differ mode: fires Differs/Matches once a digit repeats N times in
+  // a row. Entirely separate stake/martingale state from Martingale/Ra.
+  const [differStreakLength, setDifferStreakLength] = useState('3');
+  const [differTradeType, setDifferTradeType] = useState<DifferTradeType>('differs');
+  const [differInitialStake, setDifferInitialStake] = useState('1');
+  const [differStakeMultiplier, setDifferStakeMultiplier] = useState('2.5');
+  const [differMartingaleAfterLosses, setDifferMartingaleAfterLosses] = useState('0');
+  const [differTakeProfit, setDifferTakeProfit] = useState('0');
+  const [differStopLoss, setDifferStopLoss] = useState('0');
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -690,6 +803,14 @@ export function TradeRobotView({
       if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
       if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
       if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+      if (typeof saved.differStreakLength === 'string') setDifferStreakLength(saved.differStreakLength);
+      if (typeof saved.differTradeType === 'string') setDifferTradeType(saved.differTradeType);
+      if (typeof saved.differInitialStake === 'string') setDifferInitialStake(saved.differInitialStake);
+      if (typeof saved.differStakeMultiplier === 'string') setDifferStakeMultiplier(saved.differStakeMultiplier);
+      if (typeof saved.differMartingaleAfterLosses === 'string')
+        setDifferMartingaleAfterLosses(saved.differMartingaleAfterLosses);
+      if (typeof saved.differTakeProfit === 'string') setDifferTakeProfit(saved.differTakeProfit);
+      if (typeof saved.differStopLoss === 'string') setDifferStopLoss(saved.differStopLoss);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -713,6 +834,13 @@ export function TradeRobotView({
         raTradingMode,
         raTakeProfit,
         raStopLoss,
+        differStreakLength,
+        differTradeType,
+        differInitialStake,
+        differStakeMultiplier,
+        differMartingaleAfterLosses,
+        differTakeProfit,
+        differStopLoss,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -774,9 +902,26 @@ export function TradeRobotView({
     balance,
   });
 
+  const differBot = useDifferBot({
+    currentTick,
+    pipSize,
+    setStake,
+    setContractMode,
+    setSelectedDigit,
+    proposal,
+    isProposalLoading,
+    buyContract,
+    buyResult,
+    buyError,
+    clearBuyResult,
+    openPositions,
+    balance,
+  });
+
   // Whichever strategy is currently selected — used to gate Manual mode and
   // to decide what the Start/Stop button and header status line show.
-  const activeBotRunning = botMode === 'ra' ? raBot.running : bot.running;
+  const activeBotRunning =
+    botMode === 'ra' ? raBot.running : botMode === 'differ' ? differBot.running : bot.running;
 
   // Celebration modal — opens the moment the bot's phase flips to
   // `stopped-target`, independent of that phase so the user can dismiss it
@@ -835,9 +980,43 @@ export function TradeRobotView({
     });
   };
 
+  const handleDifferStart = () => {
+    if (differBot.running) {
+      differBot.stop('manual');
+      toast.info(localize('Robot stopped'));
+      return;
+    }
+    const streakLength = parseInt(differStreakLength, 10);
+    if (!streakLength || streakLength < 2 || streakLength > 9) {
+      toast.error(localize('Enter a valid Streak Length (2-9) first.'));
+      return;
+    }
+    const differStake = parseFloat(differInitialStake);
+    if (!differStake || differStake <= 0) {
+      toast.error(localize('Enter a valid Differ stake first.'));
+      return;
+    }
+    differBot.start({
+      streakLength,
+      tradeType: differTradeType,
+      initialStake: differStake,
+      stakeMultiplier: parseFloat(differStakeMultiplier) || 1,
+      martingaleStartAfter: Math.max(0, parseInt(differMartingaleAfterLosses, 10) || 0),
+      takeProfit: parseFloat(differTakeProfit) || 0,
+      stopLoss: parseFloat(differStopLoss) || 0,
+    });
+    toast.info(localize('Robot started'), {
+      description: localize('Watching the digit stream for a repeating digit.'),
+    });
+  };
+
   const handleStart = () => {
     if (botMode === 'ra') {
       handleRaStart();
+      return;
+    }
+    if (botMode === 'differ') {
+      handleDifferStart();
       return;
     }
     if (bot.running) {
@@ -936,17 +1115,29 @@ export function TradeRobotView({
                     raBot.burstActive,
                     raBot.burstPnl
                   )
-                : getBotStatusLabel(bot.phase, localize)}
+                : botMode === 'differ'
+                  ? getDifferStatusLabel(
+                      differBot.phase,
+                      differBot.streakDigit,
+                      differBot.streakProgress,
+                      differStreakLength,
+                      localize,
+                      differBot.burstActive,
+                      differBot.burstPnl
+                    )
+                  : getBotStatusLabel(bot.phase, localize)}
             </span>
             <div className="flex items-center gap-1.5">
               <span
                 className={cn(
                   'text-sm font-mono font-bold tabular-nums',
-                  (botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  (botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl) >= 0
+                    ? 'text-emerald-400'
+                    : 'text-rose-400'
                 )}
               >
-                {(botMode === 'ra' ? raBot.pnl : bot.pnl) >= 0 ? '+' : ''}
-                {(botMode === 'ra' ? raBot.pnl : bot.pnl).toFixed(2)}
+                {(botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl) >= 0 ? '+' : ''}
+                {(botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl).toFixed(2)}
               </span>
               {botMode === 'martingale' && (
                 <button
@@ -973,6 +1164,19 @@ export function TradeRobotView({
                 {getRaLastBurstLabel(raBot.lastBurstOutcome, localize)}
               </p>
             )}
+          {botMode === 'differ' && !differBot.running && getDifferStoppedLabel(differBot.stoppedReason, localize) && (
+            <p className="text-[11px] text-muted-foreground px-0.5">
+              {getDifferStoppedLabel(differBot.stoppedReason, localize)}
+            </p>
+          )}
+          {botMode === 'differ' &&
+            differBot.running &&
+            !differBot.burstActive &&
+            getDifferLastBurstLabel(differBot.lastBurstOutcome, localize) && (
+              <p className="text-[11px] text-muted-foreground px-0.5">
+                {getDifferLastBurstLabel(differBot.lastBurstOutcome, localize)}
+              </p>
+            )}
         </CardHeader>
         <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:rounded-b-[inherit]">
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
@@ -983,7 +1187,7 @@ export function TradeRobotView({
               type="single"
               value={botMode}
               onValueChange={(v) => {
-                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra');
+                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra' | 'differ');
               }}
               className="w-full gap-0 rounded-full bg-muted p-1"
             >
@@ -1000,6 +1204,13 @@ export function TradeRobotView({
                 className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
               >
                 <Localize i18n_default_text="Ra" />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="differ"
+                disabled={activeBotRunning}
+                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+              >
+                <Localize i18n_default_text="Differ" />
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -1326,6 +1537,154 @@ export function TradeRobotView({
           )}
           </>
           )}
+
+          {botMode === 'differ' && (
+          <>
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Duration" />
+            </Label>
+            <Input
+              type="number"
+              value={duration}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) setDuration(val);
+              }}
+              min={durationLimits.min}
+              max={durationLimits.max}
+              labelRight={localize('Ticks')}
+            />
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize('How many times in a row a digit must repeat before Differ fires. 2-9.')}
+            >
+              <Localize i18n_default_text="Streak Length (N)" />
+            </Label>
+            <Input
+              type="number"
+              min={2}
+              max={9}
+              value={differStreakLength}
+              onChange={(e) => setDifferStreakLength(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Trade" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={differTradeType}
+              onValueChange={(v) => {
+                if (v) setDifferTradeType(v as DifferTradeType);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="differs" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Differs" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="matches" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Matches" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {differTradeType === 'differs' ? (
+                <Localize i18n_default_text="Once the digit repeats N times, bets it won't show that digit again." />
+              ) : (
+                <Localize i18n_default_text="Once the digit repeats N times, bets it will show that digit again." />
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake" />
+              </Label>
+              <Input value={differInitialStake} onChange={(e) => setDifferInitialStake(e.target.value)} />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake Multiplier" />
+              </Label>
+              <Input value={differStakeMultiplier} onChange={(e) => setDifferStakeMultiplier(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize(
+                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
+              )}
+            >
+              <Localize i18n_default_text="Start Martingale after N losses" />
+            </Label>
+            <Input
+              value={differMartingaleAfterLosses}
+              onChange={(e) => setDifferMartingaleAfterLosses(e.target.value)}
+            />
+          </div>
+
+          <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once total profit across the whole run reaches this amount, Differ stops. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Take Profit" />
+              </Label>
+              <Input
+                value={differTakeProfit}
+                onChange={(e) => setDifferTakeProfit(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Once total loss across the whole run reaches this amount, Differ stops. 0 = off.'
+                )}
+              >
+                <Localize i18n_default_text="Stop Loss" />
+              </Label>
+              <Input
+                value={differStopLoss}
+                onChange={(e) => setDifferStopLoss(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
+            <Localize i18n_default_text="Each repeated digit opens a run that trades that digit continuously (Differ's own martingale on losses) until it wins, then Differ waits for the next repeat. Take Profit and Stop Loss track total profit/loss across every run and stop Differ outright once hit." />
+          </p>
+
+          {(differBot.running || differBot.digitRecord.length > 0) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Digit Record" />
+                </Label>
+                {differBot.streakDigit !== null && differBot.streakProgress > 0 && (
+                  <span className="text-[11px] font-semibold text-foreground/80">
+                    {localize('Digit')} {differBot.streakDigit} · {differBot.streakProgress}/
+                    {differStreakLength}
+                  </span>
+                )}
+              </div>
+              <DifferDigitRecord digits={differBot.digitRecord} streakDigit={differBot.streakDigit} />
+            </div>
+          )}
+          </>
+          )}
           </fieldset>
 
           <Button
@@ -1531,6 +1890,54 @@ export function TradeRobotView({
                         {localize('Traded')} {entry.barrier}
                       </span>
                     )}
+                    <span className="text-foreground/80 font-medium">
+                      {new Date(entry.time).toLocaleTimeString()}
+                    </span>
+                    {entry.exitSpot !== null && (
+                      <span className="tabular-nums font-mono font-semibold text-foreground">{entry.exitSpot.toFixed(pipSize)}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="tabular-nums text-foreground/70">
+                      {localize('Stake')} {entry.stake.toFixed(2)}
+                    </span>
+                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {entry.won ? localize('Win') : localize('Loss')}
+                    </span>
+                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                      {entry.profit >= 0 ? '+' : ''}
+                      {entry.profit.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'logs' && botMode === 'differ' && (
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+              {differBot.log.length === 0 && (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
+                </div>
+              )}
+              {[...differBot.log].reverse().map((entry: DifferLogEntry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
+                      {localize('Real')}
+                    </span>
+                    {entry.streakDigit !== null && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
+                        {localize('Digit')} {entry.streakDigit} {localize('streak')}
+                      </span>
+                    )}
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/15 text-primary">
+                      {localize('Traded')} {entry.tradeType === 'differs' ? localize('Differs') : localize('Matches')}
+                    </span>
                     <span className="text-foreground/80 font-medium">
                       {new Date(entry.time).toLocaleTimeString()}
                     </span>
