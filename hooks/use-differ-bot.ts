@@ -13,10 +13,14 @@ import { getLastDigit } from '@/lib/digit-stats';
  * Simpler, single-stage cousin of the Ra bot (use-ra-bot.ts) — there's no
  * separate arm/confirm phase, just one streak counter on the exact digit
  * (0-9) rather than the over4/under5 side split. Once the streak hits N,
- * a burst opens: the same digit/contract keeps firing (Differ's own
- * martingale on losses) until it wins, then the bot drops back to
- * watching the digit stream for the next N-run. Take Profit/Stop Loss are
- * whole-run thresholds checked after every settlement, same as Ra's.
+ * a burst opens and Differ fires that digit; a loss benches it (see
+ * `bannedDigits` below) and drops back to watching the tick stream rather
+ * than blindly re-firing, while the martingale stake keeps escalating
+ * regardless of which digit ends up triggering next. A win — on whichever
+ * digit fires it — clears the whole bench and ends the burst, dropping
+ * back to base stake and waiting for the next fresh N-run. Take
+ * Profit/Stop Loss are whole-run thresholds checked after every
+ * settlement, same as Ra's.
  *
  * `patternGap` generalizes the streak from strictly-consecutive
  * (gap = 0, e.g. 5,5,5) to evenly-spaced (gap = 1 → 5,x,5,x,5; gap = 2 →
@@ -26,6 +30,13 @@ import { getLastDigit } from '@/lib/digit-stats';
  * consecutive-run counter, just only looking at every `period`-th tick.
  * gap = 0 collapses to a single lane and is byte-for-byte the old
  * behaviour.
+ *
+ * `bannedDigits`: any digit that just lost is benched — its streak still
+ * tracks in the background, but a completed N-run on a benched digit is
+ * silently ignored (and still requires a fresh N-run afterward) until a
+ * *different* digit fires and wins, at which point every bench clears and
+ * stake drops back to base. Multiple digits can be benched at once if
+ * more than one loses before a win comes in.
  */
 
 export type DifferTradeType = 'differs' | 'matches';
@@ -184,6 +195,11 @@ export function useDifferBot({
   // Differ's own consecutive-loss counter, driving its own stake
   // martingale. Entirely separate from the Martingale/Ra bots' tracking.
   const lossStreakRef = useRef(0);
+  // Digits currently "benched": lost last time out and are ignored (their
+  // streak still tracks, but won't fire) until some other digit wins and
+  // clears the whole bench. Cleared on every win and on start/stop.
+  const bannedDigitsRef = useRef<Set<number>>(new Set());
+  const [bannedDigits, setBannedDigits] = useState<number[]>([]);
   const balanceRef = useRef<number | null>(balance);
   useEffect(() => {
     balanceRef.current = balance;
@@ -218,6 +234,8 @@ export function useDifferBot({
       lastProcessedEpochRef.current = null;
       pendingContractIdRef.current = null;
       lossStreakRef.current = 0;
+      bannedDigitsRef.current = new Set();
+      setBannedDigits([]);
       lastFireKeyRef.current = null;
       skipLoadingWaitRef.current = false;
       setPnl(0);
@@ -244,6 +262,8 @@ export function useDifferBot({
       setBurstActive(false);
       pendingContractIdRef.current = null;
       activeTradeRef.current = null;
+      bannedDigitsRef.current = new Set();
+      setBannedDigits([]);
       setSessionDurationMs(
         sessionStartRef.current !== null ? Date.now() - sessionStartRef.current : null
       );
@@ -314,23 +334,33 @@ export function useDifferBot({
     setStreakDigit(activeLane.digit);
     setStreakProgress(Math.min(activeLane.count, cfg.streakLength));
 
-    // Streak complete — open a new burst. Only fires while idle (a burst
-    // already in flight loops from the settlement effect below without
-    // re-checking this streak). On an actual fire, every lane is wiped so
-    // the next signal needs a fresh N-run from scratch.
+    // Streak complete — either fire (if this digit isn't currently
+    // benched) or ignore it and require a fresh N-run before it's
+    // reconsidered. Only checked while idle (a burst/recovery already in
+    // flight loops from the settlement effect below without re-checking
+    // this streak). Either way, every lane is wiped so the next signal —
+    // banned or not — needs a fresh N-run from scratch.
     if (activeLane.count >= cfg.streakLength && phase === 'idle') {
       const firedDigit = activeLane.digit as number;
 
-      burstPnlRef.current = 0;
-      setBurstPnl(0);
-      setBurstActive(true);
-      setLastBurstOutcome(null);
-      placeTrade(firedDigit);
+      if (!bannedDigitsRef.current.has(firedDigit)) {
+        // Only reset the burst P/L when this is a genuinely fresh burst —
+        // if a recovery is already in flight (a prior loss benched a
+        // digit and we're waiting on a different one), keep accumulating
+        // instead of wiping the running total.
+        if (!burstActive) {
+          burstPnlRef.current = 0;
+          setBurstPnl(0);
+          setBurstActive(true);
+          setLastBurstOutcome(null);
+        }
+        placeTrade(firedDigit);
+      }
 
       resetTracking();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTick, enabled, pipSize, phase, placeTrade, resetTracking]);
+  }, [currentTick, enabled, pipSize, phase, burstActive, placeTrade, resetTracking]);
 
   // --- Once a proposal for the trade type we just set is ready, buy.
   useEffect(() => {
@@ -423,7 +453,10 @@ export function useDifferBot({
         // Continuous mode: a win doesn't end the run — re-fire the same
         // digit immediately instead of dropping back to idle to wait for a
         // fresh streak. lossStreak was just reset to 0, so this goes out
-        // at Differ's base stake.
+        // at Differ's base stake. Still clear any bench from an earlier
+        // loss cycle, since the ladder is fully paid off here too.
+        bannedDigitsRef.current = new Set();
+        setBannedDigits([]);
         const nextStake = differStakeFor(cfg, lossStreakRef.current);
         const bal = balanceRef.current;
         if (bal !== null && nextStake > bal + 0.001) {
@@ -438,22 +471,33 @@ export function useDifferBot({
       // Burst mode (default) — go back to watching the digit stream for
       // the next N-run. The bot itself keeps running.
       activeTradeRef.current = null;
+      bannedDigitsRef.current = new Set();
+      setBannedDigits([]);
       setBurstActive(false);
       setLastBurstOutcome('won');
       setPhase('idle');
       return;
     }
 
-    // Lost — before re-firing, check whether the account can actually
-    // afford the next martingale stake. If not, stop the whole bot outright.
+    // Lost — bench this digit (ignored until some other digit wins and
+    // clears the bench) and drop back to idle to watch for a different
+    // streak, rather than blindly re-firing the same digit. Before doing
+    // so, check whether the account can actually afford the next
+    // martingale stake, whichever digit ends up triggering it; if not,
+    // stop the whole bot outright now rather than waiting on a fire that
+    // can't be paid for.
     if (active) {
+      bannedDigitsRef.current.add(active.streakDigit);
+      setBannedDigits(Array.from(bannedDigitsRef.current));
+
       const nextStake = differStakeFor(cfg, lossStreakRef.current);
       const bal = balanceRef.current;
       if (bal !== null && nextStake > bal + 0.001) {
         stop('insufficient-funds');
         return;
       }
-      placeTrade(active.streakDigit);
+      activeTradeRef.current = null;
+      setPhase('idle');
     } else {
       setPhase('idle');
     }
@@ -471,6 +515,7 @@ export function useDifferBot({
     burstActive,
     burstPnl,
     lastBurstOutcome,
+    bannedDigits,
     log,
     sessionDurationMs,
     start,
