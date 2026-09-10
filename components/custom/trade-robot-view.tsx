@@ -154,6 +154,7 @@ interface SavedRobotSettings {
   raTakeProfit: string;
   raStopLoss: string;
   differStreakLength: string;
+  differPatternGap: string;
   differTradeType: DifferTradeType;
   differInitialStake: string;
   differStakeMultiplier: string;
@@ -776,6 +777,9 @@ export function TradeRobotView({
   // --- Differ mode: fires Differs/Matches once a digit repeats N times in
   // a row. Entirely separate stake/martingale state from Martingale/Ra.
   const [differStreakLength, setDifferStreakLength] = useState('3');
+  // 0 = consecutive (old behaviour). N = N ticks between each occurrence,
+  // e.g. 1 -> 5,x,5,x,5.
+  const [differPatternGap, setDifferPatternGap] = useState('0');
   const [differTradeType, setDifferTradeType] = useState<DifferTradeType>('differs');
   const [differInitialStake, setDifferInitialStake] = useState('1');
   const [differStakeMultiplier, setDifferStakeMultiplier] = useState('2.5');
@@ -804,6 +808,7 @@ export function TradeRobotView({
       if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
       if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
       if (typeof saved.differStreakLength === 'string') setDifferStreakLength(saved.differStreakLength);
+      if (typeof saved.differPatternGap === 'string') setDifferPatternGap(saved.differPatternGap);
       if (typeof saved.differTradeType === 'string') setDifferTradeType(saved.differTradeType);
       if (typeof saved.differInitialStake === 'string') setDifferInitialStake(saved.differInitialStake);
       if (typeof saved.differStakeMultiplier === 'string') setDifferStakeMultiplier(saved.differStakeMultiplier);
@@ -835,6 +840,7 @@ export function TradeRobotView({
         raTakeProfit,
         raStopLoss,
         differStreakLength,
+        differPatternGap,
         differTradeType,
         differInitialStake,
         differStakeMultiplier,
@@ -991,6 +997,11 @@ export function TradeRobotView({
       toast.error(localize('Enter a valid Streak Length (2-9) first.'));
       return;
     }
+    const patternGap = parseInt(differPatternGap, 10);
+    if (isNaN(patternGap) || patternGap < 0 || patternGap > 9) {
+      toast.error(localize('Enter a valid gap (0-9) first.'));
+      return;
+    }
     const differStake = parseFloat(differInitialStake);
     if (!differStake || differStake <= 0) {
       toast.error(localize('Enter a valid Differ stake first.'));
@@ -998,6 +1009,7 @@ export function TradeRobotView({
     }
     differBot.start({
       streakLength,
+      patternGap,
       tradeType: differTradeType,
       initialStake: differStake,
       stakeMultiplier: parseFloat(differStakeMultiplier) || 1,
@@ -1557,21 +1569,47 @@ export function TradeRobotView({
             />
           </div>
 
-          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
-            <Label
-              className="text-xs font-semibold text-foreground/90"
-              title={localize('How many times in a row a digit must repeat before Differ fires. 2-9.')}
-            >
-              <Localize i18n_default_text="Streak Length (N)" />
-            </Label>
-            <Input
-              type="number"
-              min={2}
-              max={9}
-              value={differStreakLength}
-              onChange={(e) => setDifferStreakLength(e.target.value)}
-            />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('How many times a digit must occur before Differ fires. 2-9.')}
+              >
+                <Localize i18n_default_text="Occurrences (N)" />
+              </Label>
+              <Input
+                type="number"
+                min={2}
+                max={9}
+                value={differStreakLength}
+                onChange={(e) => setDifferStreakLength(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  'Ticks between each occurrence of N. 0 = back-to-back (5,5,5). 1 = every other tick (5,x,5,x,5). 2 = every third tick, and so on.'
+                )}
+              >
+                <Localize i18n_default_text="Gap" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                max={9}
+                value={differPatternGap}
+                onChange={(e) => setDifferPatternGap(e.target.value)}
+              />
+            </div>
           </div>
+          <p className="text-[11px] text-muted-foreground px-1.5">
+            {parseInt(differPatternGap, 10) > 0 ? (
+              <Localize i18n_default_text="Fires once a digit shows up N times with this many ticks between each — e.g. gap 1: 5,x,5,x,5." />
+            ) : (
+              <Localize i18n_default_text="Fires once a digit repeats N times back-to-back." />
+            )}
+          </p>
 
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
             <Label className="text-xs font-semibold text-foreground/90">
