@@ -10,14 +10,20 @@ import { getLastDigit } from '@/lib/digit-stats';
  * Chrome extension DOM-scraping traderobot.pro) directly into Centurium,
  * driven by the real live tick stream instead of text-matching a page.
  *
- * Detection watches the over4 (digit > 4) / under5 (digit < 5) split, same
- * as the extension. Execution barrier depends on `tradeType` (see
- * RaTradeType): Trade 1 (the original, unchanged extension behavior) fires
- * a confirmed over4 run as "Superior 3" (DIGITOVER, barrier 3) and a
+ * Detection normally watches the over4 (digit > 4) / under5 (digit < 5)
+ * split, same as the extension. Execution barrier depends on `tradeType`
+ * (see RaTradeType): Trade 1 (the original, unchanged extension behavior)
+ * fires a confirmed over4 run as "Superior 3" (DIGITOVER, barrier 3) and a
  * confirmed under5 run as "Inferior 6" (DIGITUNDER, barrier 6); Trade 2
  * swaps the barrier the other way — over4 → "Superior 6", under5 →
- * "Inferior 3". Either way, Trend trades the same side that confirmed,
- * Counter trades the opposite side, Neutral never trades.
+ * "Inferior 3". Trade 3 changes *detection* instead of execution: it
+ * watches the wider over6 (digit > 6) / under3 (digit < 3) split — digits
+ * 3-6 belong to neither side and are treated as a neutral/interrupting tick
+ * (see `sideOf`) — but still *fires* on the ordinary over4/under5
+ * barriers, same as Trade 1 (Superior 3 / Inferior 6): a confirmed over6
+ * run trades over4, a confirmed under3 run trades under5. Either way,
+ * Trend trades the "natural" side that confirmed, Counter trades the
+ * opposite side, Neutral never trades.
  *
  * Once a signal fires, Ra doesn't place a single trade and go back to
  * watching — it opens a "burst": it keeps repeating the same trade
@@ -42,14 +48,27 @@ import { getLastDigit } from '@/lib/digit-stats';
  */
 
 export type RaSide = 'over4' | 'under5' | null;
+/** The side actually being watched on the digit stream for the arm/confirm
+ *  streaks. For Trade 1/Trade 2 this is the same over4/under5 split as the
+ *  traded side. For Trade 3 detection runs on the wider over6/under3 split
+ *  instead — a distinct pair of values from the over4/under5 that actually
+ *  get traded, hence its own type rather than reusing RaSide. `null` means
+ *  either "no run yet" or, mid-run, a digit (3-6 under Trade 3) that
+ *  belongs to neither side. */
+export type RaDetectionSide = 'over4' | 'under5' | 'over6' | 'under3' | null;
 export type RaTradingMode = 'trend' | 'neutral' | 'counter';
 /** Which barrier pairing a confirmed signal fires at.
  *  Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
  *  Trade 2: over4 → Superior 6, under5 → Inferior 3 — same detection,
- *  wider/inverted execution barrier. Optional on RaBotConfig so existing
- *  callers (Operations' trade-robot-view.tsx) that don't set it keep
- *  behaving exactly as Trade 1 always did. */
-export type RaTradeType = 'trade1' | 'trade2';
+ *  wider/inverted execution barrier.
+ *  Trade 3: detection itself changes to the wider over6/under3 split (see
+ *  RaDetectionSide), but execution barrier is the same as Trade 1 —
+ *  confirmed over6 → trades over4 (Superior 3), confirmed under3 → trades
+ *  under5 (Inferior 6).
+ *  Optional on RaBotConfig so existing callers (Operations'
+ *  trade-robot-view.tsx) that don't set it keep behaving exactly as
+ *  Trade 1 always did. */
+export type RaTradeType = 'trade1' | 'trade2' | 'trade3';
 /** 'burst' (default): a win ends the current burst and Ra waits for a
  *  fresh arm/confirm signal before trading again. 'continuous': a win
  *  keeps the run going — Ra re-fires the same side immediately, with no
@@ -75,8 +94,9 @@ export interface RaLogEntry {
   id: number;
   time: number;
   /** The side whose N-run + M-confirmation actually triggered this burst —
-   *  i.e. what Ra detected on the digit stream, independent of Trading Mode. */
-  signalSide: RaSide;
+   *  i.e. what Ra detected on the digit stream, independent of Trading Mode.
+   *  over4/under5 under Trade 1/Trade 2, over6/under3 under Trade 3. */
+  signalSide: RaDetectionSide;
   /** The side actually traded for this burst (same for every trade within
    *  it) — equals signalSide in Trend mode, the opposite in Counter mode. */
   side: RaSide;
@@ -91,7 +111,10 @@ export interface RaLogEntry {
 export interface RaBotConfig {
   /** N — consecutive same-side digits required to arm a side. 2-20. */
   streakCount: number;
-  /** M — consecutive matching digits required, once armed, to fire a trade. 2-20. */
+  /** M — consecutive matching digits required, once armed, to fire a
+   *  trade. 0-9. 0 means no extra confirmation is needed at all: the same
+   *  tick that completes the N-run arms the side AND immediately fires,
+   *  since confirmProgress starts at (and never needs to exceed) 0. */
   confirmationStreak: number;
   /** Ra's own base stake, entirely separate from the Martingale bot's stake settings. */
   initialStake: number;
@@ -145,8 +168,24 @@ interface UseRaBotParams {
 
 const DIGIT_RECORD_SIZE = 30;
 
-function sideOf(digit: number): RaSide {
+function sideOf(digit: number, tradeType: RaTradeType): RaDetectionSide {
+  if (tradeType === 'trade3') {
+    // Wider split for Trade 3 — digits 3-6 are neutral: they belong to
+    // neither side, so they interrupt whichever run is in progress (via
+    // the strict same-side check at the call site) without starting one
+    // of their own.
+    if (digit > 6) return 'over6';
+    if (digit < 3) return 'under3';
+    return null;
+  }
   return digit > 4 ? 'over4' : 'under5';
+}
+
+/** Trade 3's execution side for a confirmed detection side — over6 trades
+ *  like over4, under3 trades like under5. For Trade 1/Trade 2, detection
+ *  and execution sides are already the same, so this is a no-op passthrough. */
+function naturalTradeSide(detectionSide: Exclude<RaDetectionSide, null>): Exclude<RaSide, null> {
+  return detectionSide === 'over6' || detectionSide === 'over4' ? 'over4' : 'under5';
 }
 
 /** Ra's own martingale stake for a given loss streak, mirroring the
@@ -178,7 +217,7 @@ export function useRaBot({
   const [pnl, setPnl] = useState(0);
   const [digitRecord, setDigitRecord] = useState<number[]>([]);
   const [stoppedReason, setStoppedReason] = useState<RaStopReason>(null);
-  const [armedSide, setArmedSide] = useState<RaSide>(null);
+  const [armedSide, setArmedSide] = useState<RaDetectionSide>(null);
   const [confirmProgress, setConfirmProgress] = useState(0);
   const [lastFired, setLastFired] = useState<{
     side: RaSide;
@@ -229,15 +268,15 @@ export function useRaBot({
     /** The signal side that triggered this burst — see RaLogEntry.signalSide
      *  for why this is tracked separately from `side`. Fixed for the whole
      *  burst, same as `side`. */
-    signalSide: RaSide;
+    signalSide: RaDetectionSide;
     contractMode: ContractMode;
     selectedDigit: number;
     barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3';
     stake: number;
   } | null>(null);
 
-  const armedSideRef = useRef<RaSide>(null);
-  const primaryStreakRef = useRef<{ side: RaSide; count: number }>({ side: null, count: 0 });
+  const armedSideRef = useRef<RaDetectionSide>(null);
+  const primaryStreakRef = useRef<{ side: RaDetectionSide; count: number }>({ side: null, count: 0 });
   const confirmCountRef = useRef(0);
   // Wall-clock timer for the ARM Time Limit: started fresh whenever a side
   // newly arms or flips to the opposite side, cleared/restarted on the next
@@ -386,20 +425,22 @@ export function useRaBot({
   // proposal → buy flow. Shared between opening a fresh burst and looping
   // the same trade again after a loss within it.
   const placeTrade = useCallback(
-    (side: Exclude<RaSide, null>, signalSide: Exclude<RaSide, null>) => {
+    (side: Exclude<RaSide, null>, signalSide: Exclude<RaDetectionSide, null>) => {
       const cfg = cfgRef.current;
       const raStake = raStakeFor(cfg, lossStreakRef.current);
       setStake(raStake.toFixed(2));
 
       const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
-      // Trade 1 (default/original): over4 → Superior 3, under5 → Inferior 6.
+      // Trade 1 (default/original) and Trade 3 both fire the ordinary
+      // over4 → Superior 3 / under5 → Inferior 6 barrier — Trade 3 only
+      // changes what's *detected* on the digit stream, not what's traded.
       // Trade 2: over4 → Superior 6, under5 → Inferior 3 — same side/contract
       // mode, wider-or-narrower barrier swapped the other way.
       const tradeType = cfg.tradeType ?? 'trade1';
       const selectedDigit =
-        tradeType === 'trade1' ? (side === 'over4' ? 3 : 6) : side === 'over4' ? 6 : 3;
+        tradeType !== 'trade2' ? (side === 'over4' ? 3 : 6) : side === 'over4' ? 6 : 3;
       const barrier: 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3' =
-        tradeType === 'trade1'
+        tradeType !== 'trade2'
           ? side === 'over4'
             ? 'Superior 3'
             : 'Inferior 6'
@@ -436,8 +477,8 @@ export function useRaBot({
     lastProcessedEpochRef.current = currentTick.epoch;
 
     const digit = getLastDigit(currentTick.quote, pipSize);
-    const side = sideOf(digit);
     const cfg = cfgRef.current;
+    const side = sideOf(digit, cfg.tradeType ?? 'trade1');
 
     setDigitRecord((prev) => [...prev.slice(-(DIGIT_RECORD_SIZE - 1)), digit]);
 
@@ -466,7 +507,10 @@ export function useRaBot({
     // entirely and arms the new side fresh. A run shorter than N on the
     // opposite side only resets confirmation (handled above) and never
     // triggers this.
-    if (primaryStreakRef.current.count >= cfg.streakCount) {
+    // Under Trade 3, consecutive neutral (3-6) digits also satisfy
+    // `primary.side === side` above and can rack up a "streak" of side
+    // `null` — that's not a real signal, so it's never allowed to arm.
+    if (primaryStreakRef.current.side !== null && primaryStreakRef.current.count >= cfg.streakCount) {
       const streakSide = primaryStreakRef.current.side;
       if (armedSideRef.current === null) {
         armedSideRef.current = streakSide;
@@ -500,12 +544,13 @@ export function useRaBot({
       const confirmedSide = armedSideRef.current;
 
       if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
+        // "Natural" side is the one that would actually get traded in
+        // Trend mode — same as confirmedSide for Trade 1/Trade 2, but
+        // over6→over4 / under3→under5 under Trade 3. Counter always trades
+        // the opposite of that natural side.
+        const natural = naturalTradeSide(confirmedSide as Exclude<RaDetectionSide, null>);
         const tradeSide: Exclude<RaSide, null> =
-          cfg.tradingMode === 'trend'
-            ? (confirmedSide as Exclude<RaSide, null>)
-            : confirmedSide === 'over4'
-              ? 'under5'
-              : 'over4';
+          cfg.tradingMode === 'trend' ? natural : natural === 'over4' ? 'under5' : 'over4';
 
         // Open a fresh burst: reset this burst's own running P/L display
         // before firing the opening trade.
@@ -513,7 +558,7 @@ export function useRaBot({
         setBurstPnl(0);
         setBurstActive(true);
         setLastBurstOutcome(null);
-        placeTrade(tradeSide, confirmedSide as Exclude<RaSide, null>);
+        placeTrade(tradeSide, confirmedSide as Exclude<RaDetectionSide, null>);
 
         // Full reset — mirrors the extension's resetArmState(): armed
         // side and primary streak are cleared too, not just confirmCount.
@@ -646,7 +691,7 @@ export function useRaBot({
           return;
         }
         setLastBurstOutcome('won');
-        placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
+        placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaDetectionSide, null>);
         return;
       }
 
@@ -672,7 +717,7 @@ export function useRaBot({
         stop('insufficient-funds');
         return;
       }
-      placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaSide, null>);
+      placeTrade(active.side as Exclude<RaSide, null>, active.signalSide as Exclude<RaDetectionSide, null>);
     } else {
       setPhase('idle');
     }
