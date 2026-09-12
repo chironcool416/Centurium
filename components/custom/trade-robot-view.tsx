@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
-import { useRaBot, type RaPhase, type RaTradingMode, type RaSide, type RaLogEntry } from '@/hooks/use-ra-bot';
+import { useRaBot, type RaPhase, type RaTradingMode, type RaDetectionSide, type RaLogEntry } from '@/hooks/use-ra-bot';
 import {
   useDifferBot,
   type DifferPhase,
@@ -340,15 +340,17 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
   }
 }
 
-function raSideLabel(side: RaSide, localize: (t: string) => string): string {
+function raSideLabel(side: RaDetectionSide, localize: (t: string) => string): string {
   if (side === 'over4') return localize('Over 4');
   if (side === 'under5') return localize('Under 5');
+  if (side === 'over6') return localize('Over 6');
+  if (side === 'under3') return localize('Under 3');
   return '';
 }
 
 function getRaStatusLabel(
   phase: RaPhase,
-  armedSide: RaSide,
+  armedSide: RaDetectionSide,
   confirmProgress: number,
   confirmationStreak: string,
   localize: (t: string) => string,
