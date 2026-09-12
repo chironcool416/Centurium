@@ -29,7 +29,7 @@ import {
   type MinervaTradingMode,
   type MinervaTradeType,
   type MinervaRunMode,
-  type MinervaSide,
+  type MinervaDetectionSide,
   type MinervaLogEntry,
 } from '@/hooks/use-minerva-bot';
 import { useIsMobile } from '@/hooks/use-is-mobile';
@@ -322,15 +322,17 @@ function TickSparkline({ prices }: { prices: number[] }) {
   );
 }
 
-function raSideLabel(side: MinervaSide, localize: (t: string) => string): string {
+function raSideLabel(side: MinervaDetectionSide, localize: (t: string) => string): string {
   if (side === 'over4') return localize('Over 4');
   if (side === 'under5') return localize('Under 5');
+  if (side === 'over6') return localize('Over 6');
+  if (side === 'under3') return localize('Under 3');
   return '';
 }
 
 function getRaStatusLabel(
   phase: MinervaPhase,
-  armedSide: MinervaSide,
+  armedSide: MinervaDetectionSide,
   confirmProgress: number,
   confirmationStreak: string,
   localize: (t: string) => string,
@@ -394,19 +396,31 @@ function getRaLastBurstLabel(
 /** Small strip of the last digits seen while Minerva was on — oldest to newest,
  *  over4 (5-9) and under5 (0-4) colored differently, newest highlighted.
  *  Native equivalent of the extension's popup "Digit Record". */
-function RaDigitRecord({ digits }: { digits: number[] }) {
+function RaDigitRecord({ digits, tradeType }: { digits: number[]; tradeType: MinervaTradeType }) {
   if (digits.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1 rounded-md bg-muted/30 p-2">
       {digits.map((d, i) => {
-        const isOver4 = d > 4;
         const isNewest = i === digits.length - 1;
+        // Trade 3 watches the wider over6/under3 split — digits 3-6 are
+        // neutral there (belong to neither side), so they're shown muted
+        // instead of colored either green or red.
+        const colorClass =
+          tradeType === 'trade3'
+            ? d > 6
+              ? 'bg-emerald-500/25 text-emerald-400'
+              : d < 3
+                ? 'bg-rose-500/25 text-rose-400'
+                : 'bg-muted text-muted-foreground/70'
+            : d > 4
+              ? 'bg-emerald-500/25 text-emerald-400'
+              : 'bg-rose-500/25 text-rose-400';
         return (
           <span
             key={i}
             className={cn(
               'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold tabular-nums',
-              isOver4 ? 'bg-emerald-500/25 text-emerald-400' : 'bg-rose-500/25 text-rose-400',
+              colorClass,
               isNewest && 'ring-2 ring-primary'
             )}
           >
@@ -865,8 +879,11 @@ export function MinervaView({
       toast.error(localize('Enter a valid Streak Count (2-20) first.'));
       return;
     }
-    if (!confirmationStreak || confirmationStreak < 2 || confirmationStreak > 20) {
-      toast.error(localize('Enter a valid Confirmation Streak (2-20) first.'));
+    // 0 is a valid, deliberate Confirmation Streak (fire immediately once
+    // armed, no extra confirmation) — so this can't use `!confirmationStreak`
+    // the way Streak Count above does, since that would also reject 0.
+    if (Number.isNaN(confirmationStreak) || confirmationStreak < 0 || confirmationStreak > 9) {
+      toast.error(localize('Enter a valid Confirmation Streak (0-9) first.'));
       return;
     }
     const raStake = parseFloat(raInitialStake);
@@ -1066,7 +1083,11 @@ export function MinervaView({
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
-                title={localize('N consecutive same-side digits (over4 / under5) required to arm a run before confirmation starts.')}
+                title={
+                  raTradeType === 'trade3'
+                    ? localize('N consecutive same-side digits (over6 / under3) required to arm a run before confirmation starts.')
+                    : localize('N consecutive same-side digits (over4 / under5) required to arm a run before confirmation starts.')
+                }
               >
                 <Localize i18n_default_text="Streak Count" />
               </Label>
@@ -1081,14 +1102,14 @@ export function MinervaView({
             <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
               <Label
                 className="text-xs font-semibold text-foreground/90"
-                title={localize('M more consecutive same-side digits, uninterrupted, required after arming before the trade fires.')}
+                title={localize('M more consecutive same-side digits, uninterrupted, required after arming before the trade fires. 0 = fire immediately on arming, no extra confirmation needed.')}
               >
                 <Localize i18n_default_text="Confirmation Streak" />
               </Label>
               <Input
                 type="number"
-                min={2}
-                max={20}
+                min={0}
+                max={9}
                 value={raConfirmationStreak}
                 onChange={(e) => setRaConfirmationStreak(e.target.value)}
               />
@@ -1134,14 +1155,22 @@ export function MinervaView({
               </ToggleGroupItem>
             </ToggleGroup>
             <p className="text-[11px] text-muted-foreground">
-              {raTradingMode === 'trend' && (
-                <Localize i18n_default_text="Confirmed over4 → Superior 3, confirmed under5 → Inferior 6." />
-              )}
               {raTradingMode === 'neutral' && (
                 <Localize i18n_default_text="Won't trade until you pick Trend or Counter." />
               )}
-              {raTradingMode === 'counter' && (
-                <Localize i18n_default_text="Confirmed over4 → Inferior 6, confirmed under5 → Superior 3." />
+              {raTradingMode !== 'neutral' && raTradeType !== 'trade3' && (
+                raTradingMode === 'trend' ? (
+                  <Localize i18n_default_text="Confirmed over4 → Superior 3, confirmed under5 → Inferior 6." />
+                ) : (
+                  <Localize i18n_default_text="Confirmed over4 → Inferior 6, confirmed under5 → Superior 3." />
+                )
+              )}
+              {raTradingMode !== 'neutral' && raTradeType === 'trade3' && (
+                raTradingMode === 'trend' ? (
+                  <Localize i18n_default_text="Confirmed over6 → trades over4 (Superior 3), confirmed under3 → trades under5 (Inferior 6)." />
+                ) : (
+                  <Localize i18n_default_text="Confirmed over6 → trades under5 (Inferior 6), confirmed under3 → trades over4 (Superior 3)." />
+                )
               )}
             </p>
           </div>
@@ -1164,12 +1193,19 @@ export function MinervaView({
               <ToggleGroupItem value="trade2" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
                 <Localize i18n_default_text="Trade 2" />
               </ToggleGroupItem>
+              <ToggleGroupItem value="trade3" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trade 3" />
+              </ToggleGroupItem>
             </ToggleGroup>
             <p className="text-[11px] text-muted-foreground">
-              {raTradeType === 'trade1' ? (
+              {raTradeType === 'trade1' && (
                 <Localize i18n_default_text="Over4 → Superior 3, Under5 → Inferior 6." />
-              ) : (
+              )}
+              {raTradeType === 'trade2' && (
                 <Localize i18n_default_text="Over4 → Superior 6, Under5 → Inferior 3." />
+              )}
+              {raTradeType === 'trade3' && (
+                <Localize i18n_default_text="Watches Over6 / Under3 instead — confirmed Over6 trades Over4 (Superior 3), confirmed Under3 trades Under5 (Inferior 6)." />
               )}
             </p>
           </div>
@@ -1255,7 +1291,7 @@ export function MinervaView({
                   </span>
                 )}
               </div>
-              <RaDigitRecord digits={raBot.digitRecord} />
+              <RaDigitRecord digits={raBot.digitRecord} tradeType={raTradeType} />
             </div>
           )}
           </fieldset>
