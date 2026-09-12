@@ -1167,9 +1167,9 @@ export function MinervaView({
               )}
               {raTradingMode !== 'neutral' && raTradeType === 'trade3' && (
                 raTradingMode === 'trend' ? (
-                  <Localize i18n_default_text="Confirmed over6 → trades over4 (Superior 3), confirmed under3 → trades under5 (Inferior 6)." />
+                  <Localize i18n_default_text="Confirmed over6 → trades over4 (Superior 4), confirmed under3 → trades under5 (Inferior 5)." />
                 ) : (
-                  <Localize i18n_default_text="Confirmed over6 → trades under5 (Inferior 6), confirmed under3 → trades over4 (Superior 3)." />
+                  <Localize i18n_default_text="Confirmed over6 → trades under5 (Inferior 5), confirmed under3 → trades over4 (Superior 4)." />
                 )
               )}
             </p>
@@ -1205,7 +1205,7 @@ export function MinervaView({
                 <Localize i18n_default_text="Over4 → Superior 6, Under5 → Inferior 3." />
               )}
               {raTradeType === 'trade3' && (
-                <Localize i18n_default_text="Watches Over6 / Under3 instead — confirmed Over6 trades Over4 (Superior 3), confirmed Under3 trades Under5 (Inferior 6)." />
+                <Localize i18n_default_text="Watches Over6 / Under3 instead — confirmed Over6 trades an actual Over 4 (Superior 4), confirmed Under3 trades an actual Under 5 (Inferior 5)." />
               )}
             </p>
           </div>
