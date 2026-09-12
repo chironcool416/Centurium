@@ -10,6 +10,7 @@
 export {
   useRaBot as useMinervaBot,
   type RaSide as MinervaSide,
+  type RaDetectionSide as MinervaDetectionSide,
   type RaTradingMode as MinervaTradingMode,
   type RaStopReason as MinervaStopReason,
   type RaPhase as MinervaPhase,
