@@ -159,6 +159,7 @@ interface SavedRobotSettings {
   raRunMode: MinervaRunMode;
   raTakeProfit: string;
   raStopLoss: string;
+  raRunTakeProfit: string;
 }
 
 /** A named, timestamped settings snapshot — one entry per saved profile. */
@@ -676,6 +677,11 @@ export function MinervaView({
   const [raRunMode, setRaRunMode] = useState<MinervaRunMode>('burst');
   const [raTakeProfit, setRaTakeProfit] = useState('0');
   const [raStopLoss, setRaStopLoss] = useState('0');
+  // "Run TP" — take-profit for the *current burst/signal only*, separate
+  // from the whole-run Take Profit above. Once a burst's own P/L reaches
+  // this, that burst ends (back to idle, waiting for the next signal)
+  // without stopping the bot and without popping the Victory dialog. 0 = off.
+  const [raRunTakeProfit, setRaRunTakeProfit] = useState('0');
 
   const [robotProfiles, setRobotProfiles] = useState<RobotSettingsProfilesMap>({});
   const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
@@ -694,6 +700,7 @@ export function MinervaView({
     if (typeof saved.raRunMode === 'string') setRaRunMode(saved.raRunMode);
     if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
     if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+    if (typeof saved.raRunTakeProfit === 'string') setRaRunTakeProfit(saved.raRunTakeProfit);
   };
 
   const currentSettingsSnapshot = (): SavedRobotSettings => ({
@@ -709,6 +716,7 @@ export function MinervaView({
     raRunMode,
     raTakeProfit,
     raStopLoss,
+    raRunTakeProfit,
   });
 
   const persistProfiles = (next: RobotSettingsProfilesMap) => {
@@ -904,6 +912,7 @@ export function MinervaView({
       runMode: raRunMode,
       takeProfit: parseFloat(raTakeProfit) || 0,
       stopLoss: parseFloat(raStopLoss) || 0,
+      runTakeProfit: parseFloat(raRunTakeProfit) || 0,
     });
     toast.info(localize('Robot started'), {
       description:
@@ -1269,13 +1278,29 @@ export function MinervaView({
                 labelRight="USD"
               />
             </div>
+            <div className="col-span-2 space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize(
+                  "Once THIS signal's own profit reaches this amount, Minerva stops that signal and waits for the next one — the bot itself keeps running and this never pops the Take Profit popup. 0 = off."
+                )}
+              >
+                <Localize i18n_default_text="Run TP" />
+              </Label>
+              <Input
+                value={raRunTakeProfit}
+                onChange={(e) => setRaRunTakeProfit(e.target.value)}
+                labelRight="USD"
+              />
+            </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
             {raRunMode === 'burst' ? (
               <Localize i18n_default_text="Each signal opens a burst that trades continuously (same side, Minerva's own martingale on losses) until it wins, then Minerva waits for the next signal. Take Profit and Stop Loss track total profit/loss across every burst and stop Minerva outright once hit." />
             ) : (
               <Localize i18n_default_text="Once a signal fires, Minerva trades continuously (same side, martingale on losses, back to base stake on each win) with no pauses in between, straight through until Take Profit or Stop Loss stops it outright." />
-            )}
+            )}{' '}
+            <Localize i18n_default_text="Run TP caps how much a single signal is allowed to make before Minerva cuts it short and waits for the next one — separate from, and always smaller than, the whole-run Take Profit above." />
           </p>
 
           {(raBot.running || raBot.digitRecord.length > 0) && (
