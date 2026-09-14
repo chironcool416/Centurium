@@ -144,6 +144,18 @@ export interface RaBotConfig {
   /** Stop-loss for the whole run (positive number; stops the bot once total
    *  P/L <= -this). 0 = off. */
   stopLoss: number;
+  /** "Run TP" — take-profit for the *current burst only* (see `burstPnl`).
+   *  Once a burst's own running P/L reaches this, that burst is cut short —
+   *  same as a win ending it — and the bot goes back to idle to watch for a
+   *  fresh signal. This does NOT stop the bot and does NOT count as the
+   *  whole-run `takeProfit` above, so it never triggers the Take Profit
+   *  dialog — only reaching `takeProfit` itself does that. In 'burst' mode
+   *  a single win already ends the burst regardless of amount, so this
+   *  mostly matters for 'continuous' mode, where it caps how much a single
+   *  signal is allowed to run before Minerva waits for the next one. 0 or
+   *  omitted = off. Optional so existing callers (Operations'
+   *  trade-robot-view.tsx) keep compiling and behaving unchanged. */
+  runTakeProfit?: number;
   /** What a win does — see RaRunMode above. Undefined/omitted behaves
    *  exactly as 'burst' always has, so existing callers (Operations'
    *  trade-robot-view.tsx) keep compiling and behaving unchanged. */
@@ -678,6 +690,27 @@ export function useRaBot({
       // Whole-run target hit — stop the bot outright (same as calling
       // stop() manually), rather than just ending this burst.
       stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
+      return;
+    }
+
+    // "Run TP" — this burst's own running P/L hit its (smaller) target.
+    // Cut the burst short right here: same reset as a natural win ending a
+    // burst, and the bot itself keeps running (unlike the whole-run
+    // takeProfit/stopLoss above, this never calls stop() and never sets
+    // stoppedReason, so it can't pop the Take Profit/Victory dialog —
+    // that's reserved for the real takeProfit). Checked before the
+    // win/continuous/martingale branches below so it overrides all of
+    // them: a continuous-mode win that would otherwise re-fire, or a loss
+    // that would otherwise martingale, both stop here instead once the
+    // burst's P/L has reached runTakeProfit.
+    const hitRunTakeProfit =
+      !!cfg.runTakeProfit && cfg.runTakeProfit > 0 && nextBurstPnl >= cfg.runTakeProfit;
+
+    if (hitRunTakeProfit) {
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('won');
+      setPhase('idle');
       return;
     }
 
