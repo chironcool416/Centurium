@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Public homepage. Simple welcome screen with entry points into the three
+ * Public homepage. Simple welcome screen with entry points into the four
  * functional apps (Digits manual trading, the Operations/analysis view,
- * and the Minerva automated bot).
+ * the Minerva automated bot, and the AI Scanner).
  * Doesn't require auth — Header shows Log in / Sign up until the user
  * authenticates from inside one of the apps.
  */
@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
-import { LineChart, Zap, Shield } from 'lucide-react';
+import { LineChart, Zap, Shield, Radar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Header } from '@/components/custom/header';
@@ -28,7 +28,7 @@ function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
 }
 
-type HomeCardKey = 'digits' | 'robot' | 'minerva';
+type HomeCardKey = 'digits' | 'robot' | 'minerva' | 'scanner';
 
 /**
  * Premium hover micro-interaction for the two entry cards below.
@@ -81,6 +81,7 @@ export default function HomePage() {
   const digitsCard = getHomeCardProps('digits');
   const robotCard = getHomeCardProps('robot');
   const minervaCard = getHomeCardProps('minerva');
+  const scannerCard = getHomeCardProps('scanner');
 
   // The intro splash sits on top of the page for ~10s before fading out, but
   // these cards mount immediately underneath it. Without this gate, the
@@ -135,7 +136,7 @@ export default function HomePage() {
             <Localize i18n_default_text="Trade digit contracts manually, or open the analysis view to track live ticks and place trades from one panel." />
           </p>
 
-          <div className="mt-10 grid w-full max-w-4xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-10 grid w-full max-w-6xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div style={panelEntranceStyle(0)}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
@@ -229,6 +230,39 @@ export default function HomePage() {
                 >
                   <Link href="/minerva">
                     <Localize i18n_default_text="Open Minerva" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+            </div>
+
+            <div style={panelEntranceStyle(390)}>
+            <Card
+              className={`panel-glow bg-card/30 backdrop-blur-md text-left ${scannerCard.className}`}
+              style={scannerCard.style}
+              onMouseEnter={scannerCard.onMouseEnter}
+              onMouseLeave={scannerCard.onMouseLeave}
+              onFocus={scannerCard.onFocus}
+              onBlur={scannerCard.onBlur}
+            >
+              <div aria-hidden className={scannerCard.overlayClassName} />
+              <CardContent className="flex flex-col gap-3 pt-6">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-primary">
+                  <Radar className="h-5 w-5" />
+                </div>
+                <h2 className="text-base font-semibold text-foreground">
+                  <Localize i18n_default_text="AI Scanner" />
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  <Localize i18n_default_text="Scans every volatility market for the cleanest Over/Under setup, then trades it with a recovery flow." />
+                </p>
+                <Button
+                  asChild
+                  variant="outline"
+                  className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
+                >
+                  <Link href="/scanner">
+                    <Localize i18n_default_text="Open AI Scanner" />
                   </Link>
                 </Button>
               </CardContent>
