@@ -7,12 +7,14 @@ import { analyseMarket, type ScanCandidate } from '@/lib/scanner-analysis';
 import { SYMBOL_DISPLAY_NAMES } from '@/lib/active-symbols-display-names';
 
 /**
- * AI Scanner. Two jobs:
+ * AI Scanner. Three jobs:
  *  1. scan(): pull recent ticks for every volatility market, score Over N /
  *     Under (9-N) on each, and pick the cleanest setup (or report none).
  *  2. start(): trade the chosen setup 1 tick at a time with a martingale
  *     recovery flow, stopping at take-profit, stop-loss, max recovery steps
  *     or when the user presses stop.
+ *  3. autoRun(): keep scanning (pausing between rounds) until a clean setup
+ *     turns up, then immediately trade it via start().
  */
 
 export type ScanPhase = 'idle' | 'scanning' | 'done';
@@ -66,9 +68,15 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState<ScannerStats>(EMPTY_STATS);
   const [log, setLog] = useState<ScannerLogEntry[]>([]);
+  const [auto, setAuto] = useState(false);
+  const [round, setRound] = useState(0);
+  const [countdown, setCountdown] = useState(0);
 
   const runningRef = useRef(false);
   const scanningRef = useRef(false);
+  const abortRef = useRef(false);
+  const autoRef = useRef(false);
+  const scanFailedRef = useRef(false);
   const logId = useRef(0);
   const balanceRef = useRef(balance);
   balanceRef.current = balance;
@@ -79,18 +87,31 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
 
   // Stop everything if the connection drops.
   useEffect(() => {
-    if (!isConnected) runningRef.current = false;
+    if (!isConnected) {
+      runningRef.current = false;
+      abortRef.current = true;
+    }
   }, [isConnected]);
-  useEffect(() => () => { runningRef.current = false; scanningRef.current = false; }, []);
+  useEffect(
+    () => () => {
+      runningRef.current = false;
+      scanningRef.current = false;
+      abortRef.current = true;
+      autoRef.current = false;
+    },
+    []
+  );
 
   const scan = useCallback(
-    async (overBarrier: number, tickCount: number) => {
-      if (!ws || !isConnected || scanningRef.current || runningRef.current) return;
+    async (overBarrier: number, tickCount: number): Promise<ScanCandidate | null> => {
+      if (!ws || !isConnected || scanningRef.current || runningRef.current) return null;
       const markets = symbols.filter((s) => VOL_SYMBOL.test(s.underlying_symbol));
+      scanFailedRef.current = false;
       if (markets.length === 0) {
+        scanFailedRef.current = true;
         setMessage('No volatility markets are available right now.');
         setPhase('done');
-        return;
+        return null;
       }
       scanningRef.current = true;
       setPhase('scanning');
@@ -101,7 +122,7 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
       const all: ScanCandidate[] = [];
 
       for (let i = 0; i < markets.length; i++) {
-        if (!scanningRef.current) break;
+        if (abortRef.current) break;
         const m = markets[i];
         const name = nameOf(m);
         setProgress({ index: i + 1, total: markets.length, name });
@@ -120,6 +141,16 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
       }
 
       scanningRef.current = false;
+      if (abortRef.current) {
+        setPhase('idle');
+        return null;
+      }
+      if (all.length === 0) {
+        scanFailedRef.current = true;
+        setMessage('Could not load market data. Check your connection.');
+        setPhase('done');
+        return null;
+      }
       const ranked = all.sort((a, b) => Number(b.passes) - Number(a.passes) || b.score - a.score);
       setRanking(ranked.slice(0, 6));
       const best = ranked.find((c) => c.passes) ?? null;
@@ -130,12 +161,24 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
           : 'No clean setup found. The scanner blocked noisy or low-confidence setups.'
       );
       setPhase('done');
+      return best;
     },
     [ws, isConnected, symbols]
   );
 
+  /** Manual single scan (does not trade). */
+  const scanOnce = useCallback(
+    async (overBarrier: number, tickCount: number) => {
+      abortRef.current = false;
+      return scan(overBarrier, tickCount);
+    },
+    [scan]
+  );
+
   const stop = useCallback(() => {
     runningRef.current = false;
+    abortRef.current = true;
+    autoRef.current = false;
   }, []);
 
   /** Wait for a contract to settle; resolves with its profit. */
@@ -257,5 +300,60 @@ export function useScannerBot({ ws, isConnected, isAuthenticated, symbols, curre
     [ws, isConnected, isAuthenticated, currency, awaitResult, addLog]
   );
 
-  return { phase, progress, ranking, selected, message, running, stats, log, scan, start, stop };
+  /**
+   * Continuous mode: scan, and if nothing clean turns up wait `delaySec` and
+   * scan again — repeating until a setup passes — then trade it straight away.
+   */
+  const autoRun = useCallback(
+    async (overBarrier: number, tickCount: number, settings: ScannerSettings, delaySec: number) => {
+      if (!ws || !isConnected || !isAuthenticated || autoRef.current || runningRef.current || scanningRef.current) return;
+      autoRef.current = true;
+      abortRef.current = false;
+      setAuto(true);
+      setRound(0);
+      addLog('info', 'Auto scan started — scanning until a clean setup appears.');
+
+      let n = 0;
+      let found: ScanCandidate | null = null;
+      while (autoRef.current && !abortRef.current) {
+        n++;
+        setRound(n);
+        found = await scan(overBarrier, tickCount);
+        if (!autoRef.current || abortRef.current) break;
+        if (found) break;
+        if (scanFailedRef.current) {
+          addLog('error', 'Auto scan stopped: could not load market data.');
+          break;
+        }
+        // Nothing clean this round — wait, then scan again.
+        const wait = Math.max(1, Math.floor(delaySec) || 5);
+        addLog('info', `Round ${n}: no clean setup. Rescanning in ${wait}s.`);
+        for (let t = wait; t > 0 && autoRef.current && !abortRef.current; t--) {
+          setCountdown(t);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        setCountdown(0);
+      }
+
+      const stillOn = autoRef.current && !abortRef.current;
+      if (found && stillOn) {
+        addLog('info', `Round ${n}: setup found — placing trades.`);
+        autoRef.current = false;
+        setAuto(false);
+        await start(found, settings);
+        return;
+      }
+      autoRef.current = false;
+      setAuto(false);
+      setCountdown(0);
+      addLog('info', 'Auto scan stopped.');
+    },
+    [ws, isConnected, isAuthenticated, scan, start, addLog]
+  );
+
+  return {
+    phase, progress, ranking, selected, message, running, stats, log,
+    auto, round, countdown,
+    scan: scanOnce, start, stop, autoRun,
+  };
 }
