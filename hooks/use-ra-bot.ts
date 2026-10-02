@@ -447,8 +447,8 @@ export function useRaBot({
 
       const contractMode: ContractMode = side === 'over4' ? 'DIGITOVER' : 'DIGITUNDER';
       // Trade 1 (default/original): over4 → Superior 3, under5 → Inferior 6.
-      // Trade 2: over4 → Superior 6, under5 → Inferior 3 — same side/contract
-      // mode, wider-or-narrower barrier swapped the other way.
+      // Trade 2: over4 → Superior 4, under5 → Inferior 5 — same detection as
+      // Trade 1, but fires the literal over4/under5 barriers.
       // Trade 3: detection is wider (over6/under3, see sideOf) but execution
       // is the literal over4/under5 barrier — over4 → Superior 4 (an actual
       // "Digit Over 4" trade), under5 → Inferior 5 (an actual "Digit Under 5"
@@ -457,8 +457,8 @@ export function useRaBot({
       let selectedDigit: number;
       let barrier: RaBarrier;
       if (tradeType === 'trade2') {
-        selectedDigit = side === 'over4' ? 6 : 3;
-        barrier = side === 'over4' ? 'Superior 6' : 'Inferior 3';
+        selectedDigit = side === 'over4' ? 4 : 5;
+        barrier = side === 'over4' ? 'Superior 4' : 'Inferior 5';
       } else if (tradeType === 'trade3') {
         selectedDigit = side === 'over4' ? 4 : 5;
         barrier = side === 'over4' ? 'Superior 4' : 'Inferior 5';
