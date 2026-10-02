@@ -669,7 +669,7 @@ export function MinervaView({
   const [raArmTimeLimitSeconds, setRaArmTimeLimitSeconds] = useState('0');
   const [raTradingMode, setRaTradingMode] = useState<MinervaTradingMode>('neutral');
   // Trade 1 (original): over4 → Superior 3, under5 → Inferior 6.
-  // Trade 2: over4 → Superior 6, under5 → Inferior 3.
+  // Trade 2: over4 → Superior 4, under5 → Inferior 5.
   const [raTradeType, setRaTradeType] = useState<MinervaTradeType>('trade1');
   // Burst (default): a win ends the burst and Minerva waits for a fresh
   // signal. Continuous: a win keeps the run going straight through to
@@ -1211,7 +1211,7 @@ export function MinervaView({
                 <Localize i18n_default_text="Over4 → Superior 3, Under5 → Inferior 6." />
               )}
               {raTradeType === 'trade2' && (
-                <Localize i18n_default_text="Over4 → Superior 6, Under5 → Inferior 3." />
+                <Localize i18n_default_text="Over4 → Superior 4, Under5 → Inferior 5." />
               )}
               {raTradeType === 'trade3' && (
                 <Localize i18n_default_text="Watches Over6 / Under3 instead — confirmed Over6 trades an actual Over 4 (Superior 4), confirmed Under3 trades an actual Under 5 (Inferior 5)." />
