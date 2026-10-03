@@ -8,7 +8,7 @@
  * authenticates from inside one of the apps.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
 import { LineChart, Zap, Shield, Radar } from 'lucide-react';
@@ -69,7 +69,24 @@ function useHomeCardHover() {
   return cardProps;
 }
 
+type DayPart = 'morning' | 'afternoon' | 'evening';
+
+// Uses the visitor's own device clock (local time zone), not the server's.
+// 12:00am–11:59am morning, 12:00pm–4:59pm afternoon, 5:00pm–11:59pm evening.
+function getDayPart(date: Date = new Date()): DayPart {
+  const hour = date.getHours();
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'evening';
+}
+
 export default function HomePage() {
+  // Set after mount: the server renders in its own time zone, so computing
+  // this during render would mismatch the browser and break hydration.
+  const [dayPart, setDayPart] = useState<DayPart | null>(null);
+  useEffect(() => {
+    setDayPart(getDayPart());
+  }, []);
   const [showFaviconIntro, setShowFaviconIntro] = useState(true);
   const [showIntro, setShowIntro] = useState(true);
   const logoSrc = useLogoSrc();
@@ -83,7 +100,7 @@ export default function HomePage() {
   const minervaCard = getHomeCardProps('minerva');
   const scannerCard = getHomeCardProps('scanner');
 
-  // The intro splash sits on top of the page for ~10s before fading out, but
+  // The intro splash sits on top of the page for ~5s before fading out, but
   // these cards mount immediately underneath it. Without this gate, the
   // slide-in animation plays out (and finishes) while hidden behind the
   // splash, so nothing appears to move once it's actually visible. Instead,
@@ -130,7 +147,13 @@ export default function HomePage() {
           <h1
             className={`${brandDisplay.className} text-3xl font-semibold tracking-wide text-foreground sm:text-4xl`}
           >
-            {localize('Welcome to {{appName}}', { appName })}
+            {dayPart === 'morning'
+              ? localize('Good Morning, Welcome to {{appName}}', { appName })
+              : dayPart === 'afternoon'
+                ? localize('Good Afternoon, Welcome to {{appName}}', { appName })
+                : dayPart === 'evening'
+                  ? localize('Good Evening, Welcome to {{appName}}', { appName })
+                  : localize('Welcome to {{appName}}', { appName })}
           </h1>
           <p className="mt-3 max-w-md text-sm text-muted-foreground sm:text-base">
             <Localize i18n_default_text="Trade digit contracts manually, or open the analysis view to track live ticks and place trades from one panel." />
