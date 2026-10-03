@@ -11,21 +11,19 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
-import { LineChart, Zap, Shield, Radar, MessageCircle } from 'lucide-react';
+import { LineChart, Zap, Shield, Radar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Header } from '@/components/custom/header';
 import { ThemeToggle } from '@/components/custom/theme-toggle';
 import { Footer } from '@/components/custom/footer';
+import { SupportButton } from '@/components/custom/support-button';
 import { IntroSplash } from '@/components/custom/intro-splash';
 import { FaviconIntro } from '@/components/custom/favicon-intro';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useLogoSrc } from '@/components/custom/logo-src-provider';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { brandDisplay } from '@/lib/fonts';
-
-// Telegram chat opened by the floating "Contact support" button.
-const SUPPORT_TELEGRAM_URL = 'https://t.me/nordith_007';
 
 function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
@@ -297,26 +295,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Floating support button: separate from the four panels, sits above
-            the fixed footer. Hover/focus reveals a "Contact support" label;
-            clicking opens the Telegram chat in a new tab. */}
-        <div className="group fixed bottom-16 right-4 z-40 sm:right-6">
-          <span
-            role="tooltip"
-            className="pointer-events-none absolute right-full top-1/2 mr-3 -translate-y-1/2 translate-x-1 whitespace-nowrap rounded-md border border-border bg-card/90 px-3 py-1.5 text-sm font-medium text-foreground opacity-0 shadow-lg backdrop-blur-md transition-[opacity,transform] duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100"
-          >
-            {localize('Contact support')}
-          </span>
-          <a
-            href={SUPPORT_TELEGRAM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={localize('Contact support')}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card/60 text-foreground shadow-lg backdrop-blur-md transition-transform duration-200 hover:scale-110 hover:shadow-[0_0_24px_4px_rgba(59,130,246,0.45)] focus-visible:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <MessageCircle className="h-6 w-6" />
-          </a>
-        </div>
+        <SupportButton />
 
         {/* Fixed footer */}
         <div className="fixed bottom-0 left-0 right-0 py-2 text-center bg-background/80 backdrop-blur-sm">
