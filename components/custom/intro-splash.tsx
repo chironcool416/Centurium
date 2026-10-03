@@ -3,7 +3,7 @@
 /**
  * Full-screen intro splash shown once when the homepage mounts, before the
  * Digits/Robot panels appear. Reuses the same hero background as the
- * homepage; the Centurium emblem blinks/glows on top of it for ~10s, then
+ * homepage; the Centurium emblem blinks/glows on top of it for ~5s, then
  * the whole overlay fades out and unmounts.
  *
  * Same two-layer technique as FaviconIntro, but in true 3D: the laurel
@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 
-const FLICKER_DURATION_MS = 10_000;
+const FLICKER_DURATION_MS = 5_000;
 const FADE_OUT_MS = 800;
 
 export function IntroSplash({ onFinished }: { onFinished: () => void }) {
