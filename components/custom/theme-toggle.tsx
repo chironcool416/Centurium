@@ -1,24 +1,7 @@
 'use client';
 
-import { Moon, Sun } from 'lucide-react';
-import { useTheme } from 'next-themes';
-import { Button } from '@/components/ui/button';
-import { useAppTranslations } from '@/components/custom/i18n-provider';
-
+// The app is always in dark mode, so there is no theme toggle.
+// This stays as an empty component so existing imports keep working.
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
-  const { localize } = useAppTranslations();
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-8 w-8 sm:h-10 sm:w-10 shrink-0"
-      aria-label={localize('Toggle theme')}
-      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-    >
-      <Sun className="h-4 w-4 sm:h-[1.2rem] sm:w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-      <Moon className="absolute h-4 w-4 sm:h-[1.2rem] sm:w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-    </Button>
-  );
+  return null;
 }
