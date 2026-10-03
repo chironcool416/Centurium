@@ -25,7 +25,12 @@ const fontClass =
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const logoSrc = getLogoSrc();
   return (
-    <html lang="en" className="h-full lg:h-auto" suppressHydrationWarning>
+    <html
+      lang="en"
+      className="dark h-full lg:h-auto"
+      style={{ colorScheme: 'dark' }}
+      suppressHydrationWarning
+    >
       <body
         className={`${fontClass} bg-background flex min-h-dvh flex-col overflow-hidden max-lg:h-dvh max-lg:overflow-hidden lg:block lg:h-auto lg:min-h-screen lg:overflow-x-hidden lg:overflow-y-auto`}
       >
