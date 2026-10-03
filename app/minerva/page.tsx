@@ -13,6 +13,7 @@ import { useLogoSrc } from '@/components/custom/logo-src-provider';
 import { Header } from '@/components/custom/header';
 import { ThemeToggle } from '@/components/custom/theme-toggle';
 import { Footer } from '@/components/custom/footer';
+import { SupportButton } from '@/components/custom/support-button';
 import { MinervaView } from '@/components/custom/minerva-view';
 import { MinervaSplash } from '@/components/custom/minerva-splash';
 
@@ -102,6 +103,8 @@ export default function MinervaPage() {
           clearSellError={trading.clearSellError}
         />
       </div>
+
+      <SupportButton />
 
       {/* Fixed footer */}
       <div className="fixed bottom-0 left-0 right-0 py-2 text-center bg-background/80 backdrop-blur-sm">
