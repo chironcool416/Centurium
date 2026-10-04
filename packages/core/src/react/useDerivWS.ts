@@ -15,6 +15,11 @@ export interface UseDerivWSOptions {
    * an account switch (must reconnect) from an OTP refresh (keep alive).
    */
   accountId?: string;
+  /**
+   * Returns a fresh single-use authenticated URL. Used on every automatic
+   * reconnect, because the OTP the socket first connected with is spent.
+   */
+  getFreshUrl?: () => Promise<string>;
 }
 
 interface UseDerivWSReturn {
@@ -34,7 +39,9 @@ interface UseDerivWSReturn {
  * - OTP refresh (url changes, same accountId): updateUrl() only — live socket untouched
  */
 export function useDerivWS(options?: UseDerivWSOptions): UseDerivWSReturn {
-  const { url, accountId } = options ?? {};
+  const { url, accountId, getFreshUrl } = options ?? {};
+  const getFreshUrlRef = useRef(getFreshUrl);
+  getFreshUrlRef.current = getFreshUrl;
 
   const wsRef = useRef<DerivWS | null>(null);
   const listenersRef = useRef(new Set<() => void>());
@@ -58,6 +65,13 @@ export function useDerivWS(options?: UseDerivWSOptions): UseDerivWSReturn {
     let disposed = false;
 
     const instance = new DerivWS(url);
+    if (url !== undefined) {
+      instance.setUrlProvider(async () => {
+        const provider = getFreshUrlRef.current;
+        if (!provider) throw new Error('No URL provider');
+        return provider();
+      });
+    }
     wsRef.current = instance;
     listenersRef.current.forEach((l) => l());
 
