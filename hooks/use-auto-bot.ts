@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult } from '@deriv/core';
 import type { OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
+import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
 
 export type BotPhase =
   | 'idle'
@@ -12,7 +13,9 @@ export type BotPhase =
   | 'awaiting-settlement'
   | 'stopped-target'
   | 'stopped-loss'
-  | 'stopped-error';
+  | 'stopped-error'
+  | 'stopped-funds'
+  | 'stopped-timeout';
 
 export interface BotLogEntry {
   id: number;
@@ -52,6 +55,8 @@ interface UseAutoBotParams {
   buyError: string | null;
   clearBuyResult: () => void;
   openPositions: OpenPosition[];
+  /** Live account balance, for the can-I-afford-the-next-stake check. Null/omitted skips it. */
+  balance?: number | null;
 }
 
 /**
@@ -79,6 +84,7 @@ export function useAutoBot({
   buyError,
   clearBuyResult,
   openPositions,
+  balance = null,
 }: UseAutoBotParams) {
   const [phase, setPhase] = useState<BotPhase>('idle');
   const [pnl, setPnl] = useState(0);
@@ -97,11 +103,20 @@ export function useAutoBot({
   const consecutiveLossesRef = useRef(0);
   const pendingContractIdRef = useRef<number | null>(null);
   const logIdRef = useRef(0);
+  // Cumulative P/L mirrored in a ref so the settlement effect can read and
+  // update it synchronously instead of doing work inside a setState updater.
+  const pnlRef = useRef(0);
+  const balanceRef = useRef<number | null>(balance);
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
 
   const running = phase !== 'idle' && !phase.startsWith('stopped');
 
   const pushLog = useCallback((entry: Omit<BotLogEntry, 'id' | 'time'>) => {
-    setLog((prev) => [...prev.slice(-49), { ...entry, id: logIdRef.current++, time: Date.now() }]);
+    // Take the id outside the updater: updaters must be pure (Strict Mode runs them twice).
+    const id = logIdRef.current++;
+    setLog((prev) => [...prev.slice(-49), { ...entry, id, time: Date.now() }]);
   }, []);
 
   const start = useCallback(
@@ -112,6 +127,7 @@ export function useAutoBot({
       setCurrentStake(initialStake);
       consecutiveLossesRef.current = 0;
       pendingContractIdRef.current = null;
+      pnlRef.current = 0;
       setPnl(0);
       setLog([]);
       setStake(String(initialStake));
@@ -128,6 +144,7 @@ export function useAutoBot({
   /** Zeroes the displayed cumulative profit/loss without affecting a run in
    *  progress — lets the user start a fresh count for a new session. */
   const resetPnl = useCallback(() => {
+    pnlRef.current = 0;
     setPnl(0);
   }, []);
 
@@ -180,43 +197,61 @@ export function useAutoBot({
     pushLog({ digit: exitDigit, exitSpot, won, stake: stakeAmountRef.current, profit });
     pendingContractIdRef.current = null;
 
-    setPnl((prevPnl) => {
-      const nextPnl = prevPnl + profit;
-      if (nextPnl >= cfgRef.current.targetProfit) {
-        setPhase('stopped-target');
-        return nextPnl;
-      }
-      // Amount-based stop-loss (ignored when a loss-count stop-loss is configured).
-      if (
-        cfgRef.current.stopLossLossCount === Infinity &&
-        nextPnl <= -cfgRef.current.stopLossAmount
-      ) {
+    // Plain synchronous bookkeeping — no side effects inside a setState
+    // updater (React may invoke updaters twice, e.g. in Strict Mode, which
+    // used to double-count losses and double the stake).
+    const nextPnl = pnlRef.current + profit;
+    pnlRef.current = nextPnl;
+    setPnl(nextPnl);
+
+    if (nextPnl >= cfgRef.current.targetProfit) {
+      setPhase('stopped-target');
+      return;
+    }
+    // Amount-based stop-loss (ignored when a loss-count stop-loss is configured).
+    if (
+      cfgRef.current.stopLossLossCount === Infinity &&
+      nextPnl <= -cfgRef.current.stopLossAmount
+    ) {
+      setPhase('stopped-loss');
+      return;
+    }
+
+    if (won) {
+      consecutiveLossesRef.current = 0;
+      stakeAmountRef.current = cfgRef.current.initialStake;
+    } else {
+      consecutiveLossesRef.current += 1;
+      // Loss-count-based stop-loss: stop exactly at the configured streak length.
+      if (consecutiveLossesRef.current >= cfgRef.current.stopLossLossCount) {
         setPhase('stopped-loss');
-        return nextPnl;
+        return;
       }
+      stakeAmountRef.current =
+        consecutiveLossesRef.current > cfgRef.current.martingaleStartAfter
+          ? Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100
+          : cfgRef.current.initialStake;
+    }
 
-      if (won) {
-        consecutiveLossesRef.current = 0;
-        stakeAmountRef.current = cfgRef.current.initialStake;
-      } else {
-        consecutiveLossesRef.current += 1;
-        // Loss-count-based stop-loss: stop exactly at the configured streak length.
-        if (consecutiveLossesRef.current >= cfgRef.current.stopLossLossCount) {
-          setPhase('stopped-loss');
-          return nextPnl;
-        }
-        stakeAmountRef.current =
-          consecutiveLossesRef.current > cfgRef.current.martingaleStartAfter
-            ? Math.round(stakeAmountRef.current * cfgRef.current.multiplier * 100) / 100
-            : cfgRef.current.initialStake;
-      }
-
+    // Don't fire a martingale stake the account can't pay for.
+    const bal = balanceRef.current;
+    if (bal !== null && stakeAmountRef.current > bal + 0.001) {
       setCurrentStake(stakeAmountRef.current);
-      setStake(String(stakeAmountRef.current));
-      setPhase('awaiting-proposal');
-      return nextPnl;
-    });
+      setPhase('stopped-funds');
+      return;
+    }
+
+    setCurrentStake(stakeAmountRef.current);
+    setStake(String(stakeAmountRef.current));
+    setPhase('awaiting-proposal');
   }, [phase, openPositions, setStake, pipSize, pushLog]);
+
+  // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
+  // "running" forever — stop it so the user can check Reports and restart.
+  usePhaseWatchdog(running, phase, () => {
+    pendingContractIdRef.current = null;
+    setPhase('stopped-timeout');
+  });
 
   return { phase, running, pnl, log, currentStake, start, stop, resetPnl };
 }
