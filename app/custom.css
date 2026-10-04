@@ -710,3 +710,31 @@
     padding-left: 0.22em;
   }
 }
+
+/* Homepage greeting typewriter (components/custom/typewriter-heading.tsx):
+   the thin cursor that sits after the last typed letter. It stays solid while
+   letters are being typed and blinks once the line is complete. */
+.typewriter-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: typewriter-caret-blink 1s step-end infinite;
+}
+
+.typewriter-caret--typing {
+  animation: none;
+}
+
+@keyframes typewriter-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typewriter-caret {
+    animation: none;
+  }
+}
