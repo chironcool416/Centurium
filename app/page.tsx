@@ -24,6 +24,7 @@ import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useLogoSrc } from '@/components/custom/logo-src-provider';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { brandDisplay } from '@/lib/fonts';
+import { TypewriterHeading } from '@/components/custom/typewriter-heading';
 
 function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
@@ -95,6 +96,14 @@ export default function HomePage() {
   const { auth } = useDerivWSContext();
   const { authState, accounts, activeAccount, login, signUp, logout, switchAccount } = auth;
   const appName = resolveAppName();
+  const greeting =
+    dayPart === 'morning'
+      ? localize('Good Morning, Welcome to {{appName}}', { appName })
+      : dayPart === 'afternoon'
+        ? localize('Good Afternoon, Welcome to {{appName}}', { appName })
+        : dayPart === 'evening'
+          ? localize('Good Evening, Welcome to {{appName}}', { appName })
+          : localize('Welcome to {{appName}}', { appName });
   const getHomeCardProps = useHomeCardHover();
   const digitsCard = getHomeCardProps('digits');
   const robotCard = getHomeCardProps('robot');
@@ -145,17 +154,13 @@ export default function HomePage() {
         <div className={authState === 'authenticated' ? 'h-[76px] shrink-0' : 'h-[66px] shrink-0'} />
 
         <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 text-center">
-          <h1
+          <TypewriterHeading
             className={`${brandDisplay.className} text-3xl font-semibold tracking-wide text-foreground sm:text-4xl`}
-          >
-            {dayPart === 'morning'
-              ? localize('Good Morning, Welcome to {{appName}}', { appName })
-              : dayPart === 'afternoon'
-                ? localize('Good Afternoon, Welcome to {{appName}}', { appName })
-                : dayPart === 'evening'
-                  ? localize('Good Evening, Welcome to {{appName}}', { appName })
-                  : localize('Welcome to {{appName}}', { appName })}
-          </h1>
+            text={greeting}
+            // Wait for the intro splash to finish (and the clock to be read)
+            // so the typing is actually seen, not played out behind it.
+            active={!showFaviconIntro && !showIntro && dayPart !== null}
+          />
           <p className="mt-3 max-w-md text-sm text-muted-foreground sm:text-base">
             <Localize i18n_default_text="Trade digit contracts manually, or open the analysis view to track live ticks and place trades from one panel." />
           </p>
