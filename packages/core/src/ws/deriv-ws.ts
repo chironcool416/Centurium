@@ -7,7 +7,14 @@ type ReconnectExhaustedHandler = () => void;
 interface PendingRequest {
   resolve: (data: Record<string, unknown>) => void;
   reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
+
+/** How long a one-shot request may wait for its response before it is rejected. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/** Supplies a fresh single-use authenticated WebSocket URL (OTP) on demand. */
+export type UrlProvider = () => Promise<string>;
 
 /** One real API subscription, potentially multiplexed across several callers. */
 interface KeyedSubscription {
@@ -41,7 +48,10 @@ export class DerivWS {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private url: string;
-  private isConnecting = false;
+  private connectPromise: Promise<void> | null = null;
+  private urlProvider: UrlProvider | null = null;
+  // Set by disconnect(): the socket was closed on purpose, never reconnect.
+  private closedByUser = false;
 
   constructor(url?: string) {
     this.url = url ?? getPublicWsUrl();
@@ -80,28 +90,61 @@ export class DerivWS {
     this.url = url;
   }
 
+  /**
+   * Authenticated URLs (OTPs) are single-use, so reconnecting to the URL we
+   * originally connected with fails. When a provider is set, every reconnect
+   * attempt first asks it for a fresh URL.
+   */
+  setUrlProvider(provider: UrlProvider | null): void {
+    this.urlProvider = provider;
+  }
+
+  /** Reject every in-flight request so callers never hang on a dead socket. */
+  private rejectAllPending(reason: string): void {
+    const pending = Array.from(this.pendingRequests.values());
+    this.pendingRequests.clear();
+    for (const p of pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(reason));
+    }
+  }
+
+  private registerPending(
+    reqId: number,
+    resolve: PendingRequest['resolve'],
+    reject: PendingRequest['reject']
+  ): void {
+    const timer = setTimeout(() => {
+      if (this.pendingRequests.delete(reqId)) {
+        reject(new Error('Request timed out'));
+      }
+    }, REQUEST_TIMEOUT_MS);
+    this.pendingRequests.set(reqId, { resolve, reject, timer });
+  }
+
+  private takePending(reqId: number): PendingRequest | undefined {
+    const pending = this.pendingRequests.get(reqId);
+    if (!pending) return undefined;
+    this.pendingRequests.delete(reqId);
+    clearTimeout(pending.timer);
+    return pending;
+  }
+
   connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {
       return Promise.resolve();
     }
-    if (this.isConnecting) {
-      return new Promise((resolve) => {
-        const check = setInterval(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 100);
-      });
-    }
+    // A connection attempt is already in flight — share it instead of
+    // polling (which leaked a timer forever if the attempt failed).
+    if (this.connectPromise) return this.connectPromise;
 
-    this.isConnecting = true;
+    this.closedByUser = false;
 
-    return new Promise((resolve, reject) => {
+    const attempt = new Promise<void>((resolve, reject) => {
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        this.isConnecting = false;
+        this.connectPromise = null;
         this.reconnectAttempts = 0;
         this.startPing();
         this.notifyConnectionState(true);
@@ -109,17 +152,22 @@ export class DerivWS {
       };
 
       this.ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          return; // ignore a malformed frame rather than throwing in the socket callback
+        }
         this.handleMessage(data);
       };
 
       this.ws.onerror = () => {
-        this.isConnecting = false;
+        this.connectPromise = null;
         reject(new Error('WebSocket connection error'));
       };
 
       this.ws.onclose = () => {
-        this.isConnecting = false;
+        this.connectPromise = null;
         this.stopPing();
         // The server drops every subscription when the socket closes, so
         // our bookkeeping of "what's live" must be wiped too — otherwise a
@@ -128,10 +176,17 @@ export class DerivWS {
         this.subscriptionsByKey.clear();
         this.subscriptionIdToKey.clear();
         this.pendingSubscribes.clear();
+        // Anything still waiting for a reply will never get one.
+        this.rejectAllPending('WebSocket closed');
+        // No-op if the attempt already settled; unblocks it if it never opened.
+        reject(new Error('WebSocket closed'));
+        if (this.closedByUser) return;
         this.notifyConnectionState(false);
         this.attemptReconnect();
       };
     });
+    this.connectPromise = attempt;
+    return attempt;
   }
 
   /**
@@ -147,12 +202,18 @@ export class DerivWS {
       const reqId = ++this.reqIdCounter;
       const message = { ...payload, req_id: reqId };
 
-      this.pendingRequests.set(reqId, {
-        resolve: resolve as (data: Record<string, unknown>) => void,
-        reject,
-      });
+      this.registerPending(
+        reqId,
+        resolve as (data: Record<string, unknown>) => void,
+        reject
+      );
 
-      this.ws.send(JSON.stringify(message));
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (err) {
+        this.takePending(reqId);
+        reject(err instanceof Error ? err : new Error('Send failed'));
+      }
     });
   }
 
@@ -219,8 +280,9 @@ export class DerivWS {
     const message = { ...payload, subscribe: 1, req_id: reqId };
 
     const promise = new Promise<{ subscriptionId: string | null }>((resolve, reject) => {
-      this.pendingRequests.set(reqId, {
-        resolve: (data) => {
+      this.registerPending(
+        reqId,
+        (data) => {
           const subscriptionId = this.extractSubscriptionId(data);
           entry.subscriptionId = subscriptionId;
           if (subscriptionId) this.subscriptionIdToKey.set(subscriptionId, key);
@@ -229,12 +291,18 @@ export class DerivWS {
           for (const h of entry.handlers) h(data);
           resolve({ subscriptionId });
         },
-        reject: (err) => {
+        (err) => {
           this.subscriptionsByKey.delete(key);
           reject(err);
-        },
-      });
-      this.ws!.send(JSON.stringify(message));
+        }
+      );
+      try {
+        this.ws!.send(JSON.stringify(message));
+      } catch (err) {
+        this.takePending(reqId);
+        this.subscriptionsByKey.delete(key);
+        reject(err instanceof Error ? err : new Error('Send failed'));
+      }
     }).finally(() => {
       this.pendingSubscribes.delete(key);
     });
@@ -257,12 +325,14 @@ export class DerivWS {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    this.closedByUser = true;
     this.reconnectAttempts = this.maxReconnectAttempts; // prevent reconnect
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    this.pendingRequests.clear();
+    this.connectPromise = null;
+    this.rejectAllPending('WebSocket disconnected');
     this.subscriptionsByKey.clear();
     this.subscriptionIdToKey.clear();
     this.pendingSubscribes.clear();
@@ -282,10 +352,10 @@ export class DerivWS {
 
     // Check for error
     if (data.error) {
-      if (reqId && this.pendingRequests.has(reqId)) {
-        const pending = this.pendingRequests.get(reqId)!;
-        this.pendingRequests.delete(reqId);
-        pending.reject(new Error((data.error as Record<string, string>).message));
+      if (reqId) {
+        this.takePending(reqId)?.reject(
+          new Error((data.error as Record<string, string>).message)
+        );
       }
       return;
     }
@@ -302,10 +372,8 @@ export class DerivWS {
     }
 
     // Resolve pending one-shot request
-    if (reqId && this.pendingRequests.has(reqId)) {
-      const pending = this.pendingRequests.get(reqId)!;
-      this.pendingRequests.delete(reqId);
-      pending.resolve(data);
+    if (reqId) {
+      this.takePending(reqId)?.resolve(data);
     }
   }
 
@@ -336,6 +404,7 @@ export class DerivWS {
   }
 
   private attemptReconnect(): void {
+    if (this.closedByUser) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       for (const handler of this.reconnectExhaustedHandlers) handler();
       return;
@@ -344,7 +413,19 @@ export class DerivWS {
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
 
-    this.reconnectTimeout = setTimeout(() => {
+    this.reconnectTimeout = setTimeout(async () => {
+      // Authenticated URLs are single-use: get a fresh one before retrying.
+      if (this.urlProvider) {
+        try {
+          this.url = await this.urlProvider();
+        } catch {
+          // Couldn't mint a URL (offline / token problem) — burn this
+          // attempt and back off rather than reusing the spent one.
+          this.attemptReconnect();
+          return;
+        }
+      }
+      if (this.closedByUser) return; // disconnected while we were awaiting
       this.connect().catch(() => {});
     }, delay);
   }
