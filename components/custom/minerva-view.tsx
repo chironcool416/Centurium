@@ -858,6 +858,20 @@ export function MinervaView({
   // dismiss it (and start a new run) without the reason itself changing.
   const [minervaVictoryOpen, setMinervaVictoryOpen] = useState(false);
   useEffect(() => {
+    if (raBot.stoppedReason === 'timeout') {
+      const where: Record<string, string> = {
+        'awaiting-proposal': 'waiting for a price quote',
+        'awaiting-buy': 'waiting for the buy confirmation',
+        'awaiting-settlement': 'waiting for the contract to settle',
+      };
+      toast.error(localize('Minerva stopped: no response'), {
+        description: `Stuck ${where[raBot.timeoutPhase ?? ''] ?? 'between steps'}. Check Reports for any open contract before restarting.`,
+        duration: 15000,
+      });
+    }
+  }, [raBot.stoppedReason, raBot.timeoutPhase]);
+
+  useEffect(() => {
     if (raBot.stoppedReason === 'take-profit') {
       setMinervaVictoryOpen(true);
     }
