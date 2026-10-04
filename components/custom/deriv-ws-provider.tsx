@@ -26,6 +26,7 @@ export function DerivWSProvider({ children }: { children: React.ReactNode }) {
   const { ws, isConnected, isExhausted } = useDerivWS({
     url: auth.wsUrl,
     accountId: auth.activeAccountId ?? undefined,
+    getFreshUrl: auth.getFreshWsUrl,
   });
   // Gate on wsUrl, not activeAccountId alone. An account is selected well before
   // its socket is authorized — it is restored from storage at mount and set by
