@@ -361,7 +361,7 @@ function getRaStatusLabel(
 }
 
 function getRaStoppedLabel(
-  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null,
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null,
   localize: (t: string) => string
 ): string | null {
   switch (reason) {
@@ -373,6 +373,8 @@ function getRaStoppedLabel(
       return localize('Stopped: Stop Loss');
     case 'insufficient-funds':
       return localize('Stopped: Insufficient Funds');
+    case 'timeout':
+      return localize('Stopped: No response — check Reports');
     default:
       return null;
   }
