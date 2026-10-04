@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult } from '@deriv/core';
 import type { OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
-import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
+import { usePhaseWatchdog, timeoutReason } from '@/hooks/use-phase-watchdog';
 
 export type BotPhase =
   | 'idle'
@@ -15,7 +15,9 @@ export type BotPhase =
   | 'stopped-loss'
   | 'stopped-error'
   | 'stopped-funds'
-  | 'stopped-timeout';
+  | 'stopped-timeout-proposal'
+  | 'stopped-timeout-buy'
+  | 'stopped-timeout-settlement';
 
 export interface BotLogEntry {
   id: number;
@@ -248,9 +250,9 @@ export function useAutoBot({
 
   // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
   // "running" forever — stop it so the user can check Reports and restart.
-  usePhaseWatchdog(running, phase, () => {
+  usePhaseWatchdog(running, phase, (stuckPhase) => {
     pendingContractIdRef.current = null;
-    setPhase('stopped-timeout');
+    setPhase(`stopped-${timeoutReason(stuckPhase)}` as BotPhase);
   });
 
   return { phase, running, pnl, log, currentStake, start, stop, resetPnl };
