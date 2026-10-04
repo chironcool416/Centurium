@@ -26,7 +26,10 @@ export function useBuy(
   }, []);
 
   const buyContract = useCallback(async (proposal: ProposalInfo) => {
-    if (!ws || !isConnected) return;
+    if (!ws || !isConnected) {
+      setBuyError('Not connected — purchase not sent');
+      return;
+    }
 
     setIsBuying(true);
     setBuyError(null);
@@ -46,6 +49,8 @@ export function useBuy(
           longcode: response.buy.longcode,
           balanceAfter: response.buy.balance_after,
         });
+      } else {
+        setBuyError('Purchase returned no contract');
       }
     } catch (err) {
       setBuyError(err instanceof Error ? err.message : 'Purchase failed');
