@@ -412,6 +412,7 @@ export function useRaBot({
       logIdRef.current = 0;
       setDigitRecord([]);
       setStoppedReason(null);
+      setTimeoutPhase(null);
       setLastFired(null);
       setPhase('idle');
       sessionStartRef.current = Date.now();
@@ -611,7 +612,11 @@ export function useRaBot({
     // Never buy a proposal quoted for a different stake than the one we
     // just asked for (a stale quote would silently trade the wrong amount).
     const intended = activeTradeRef.current?.stake;
-    if (intended !== undefined && Math.abs(proposal.askPrice - Math.round(intended * 100) / 100) > 0.01) return;
+    // Compare against the exact string we sent via setStake (toFixed(2)),
+    // not Math.round(x*100)/100 — the two disagree by a cent on stakes like
+    // 0.735, which made this guard reject the right quote forever and the
+    // watchdog stop the bot with "No response".
+    if (intended !== undefined && Math.abs(proposal.askPrice - parseFloat(intended.toFixed(2))) > 0.005) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
@@ -772,7 +777,11 @@ export function useRaBot({
 
   // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
   // "running" forever — stop it so the user can check Reports and restart.
-  usePhaseWatchdog(enabled, phase, () => stop('timeout'));
+  const [timeoutPhase, setTimeoutPhase] = useState<string | null>(null);
+  usePhaseWatchdog(enabled, phase, (stuckPhase) => {
+    setTimeoutPhase(stuckPhase);
+    stop('timeout');
+  });
 
   return {
     enabled,
@@ -781,6 +790,7 @@ export function useRaBot({
     pnl,
     digitRecord,
     stoppedReason,
+    timeoutPhase,
     armedSide,
     confirmProgress,
     lastFired,
