@@ -204,8 +204,12 @@ export async function refreshAccessToken(
   });
 
   if (!response.ok) {
-    clearAllAuthData();
-    throw new OAuthError(`Token refresh failed (${response.status})`);
+    // Only a 4xx means the refresh token itself is rejected (revoked/expired).
+    // A 5xx or gateway error is transient — keep the stored session so the
+    // next attempt can still succeed instead of logging the user out.
+    const fatal = response.status >= 400 && response.status < 500;
+    if (fatal) clearAllAuthData();
+    throw new OAuthError(`Token refresh failed (${response.status})`, fatal);
   }
 
   const tokenData = await response.json();
@@ -266,8 +270,12 @@ export function cleanupUrl(baseUrl: string): void {
  * Custom error class for OAuth-specific errors.
  */
 export class OAuthError extends Error {
-  constructor(message: string) {
+  /** True when retrying can't help (e.g. the refresh token was rejected). */
+  readonly fatal: boolean;
+
+  constructor(message: string, fatal = true) {
     super(message);
     this.name = 'OAuthError';
+    this.fatal = fatal;
   }
 }
