@@ -10,7 +10,12 @@ interface UseTicksReturn {
   currentTick: Tick | null;
   prices: number[];
   pipSize: number;
+  /** Set when loading history / subscribing failed and retries are exhausted. */
+  error: string | null;
 }
+
+const MAX_RETRIES = 5;
+const RETRY_DELAY_MS = 3000;
 
 export function useTicks(
   ws: DerivWS | null,
@@ -25,6 +30,11 @@ export function useTicks(
   const [currentTick, setCurrentTick] = useState<Tick | null>(null);
   const [prices, setPrices] = useState<number[]>([]);
   const [pipSize, setPipSize] = useState<number>(2);
+  const [error, setError] = useState<string | null>(null);
+  // Bumped to re-run the subscribe effect after a failure.
+  const [retryNonce, setRetryNonce] = useState(0);
+  const attemptsRef = useRef(0);
+  const lastSymbolRef = useRef<string | null>(null);
 
   const pipSizeFromPip = useCallback((pip: number): number => {
     if (pip >= 1) return 0;
@@ -36,6 +46,13 @@ export function useTicks(
   useEffect(() => {
     if (!ws || !isConnected || !activeSymbol) return;
     let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // A new symbol starts with a fresh retry budget.
+    if (lastSymbolRef.current !== activeSymbol.underlying_symbol) {
+      lastSymbolRef.current = activeSymbol.underlying_symbol;
+      attemptsRef.current = 0;
+    }
 
     // Unsubscribe from previous
     if (unsubscribeRef.current) {
@@ -93,10 +110,27 @@ export function useTicks(
       unsubscribeRef.current = sub.unsubscribe;
     }
 
-    subscribe().catch(() => {});
+    subscribe()
+      .then(() => {
+        if (disposed) return;
+        attemptsRef.current = 0;
+        setError(null);
+      })
+      .catch((err) => {
+        if (disposed) return;
+        // Previously swallowed, which left the digit stats frozen with no
+        // sign anything was wrong. Retry a few times, then surface it.
+        if (attemptsRef.current < MAX_RETRIES) {
+          attemptsRef.current += 1;
+          retryTimer = setTimeout(() => setRetryNonce((n) => n + 1), RETRY_DELAY_MS);
+        } else {
+          setError(err instanceof Error ? err.message : 'Failed to load ticks');
+        }
+      });
 
     return () => {
       disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
       setCurrentTick(null);
       setPrices([]);
       if (unsubscribeRef.current) {
@@ -109,7 +143,7 @@ export function useTicks(
       // stream. Broadcasting forget_all would wipe out anyone else's (e.g.
       // digit-alerts) subscription on the same connection.
     };
-  }, [ws, isConnected, activeSymbol, tickCount, pipSizeFromPip]);
+  }, [ws, isConnected, activeSymbol, tickCount, pipSizeFromPip, retryNonce]);
 
-  return { currentTick, prices, pipSize };
+  return { currentTick, prices, pipSize, error };
 }
