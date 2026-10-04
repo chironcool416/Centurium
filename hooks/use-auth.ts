@@ -17,6 +17,7 @@ import {
   setActiveLoginId,
   setAccountType,
   clearAllAuthData,
+  OAuthError,
   parseReferralLink,
   parseLandingParams,
   resolveReferralViaProxy,
@@ -117,6 +118,8 @@ export interface UseAuthReturn {
   signUp: () => Promise<void>;
   logout: () => void;
   switchAccount: (accountId: string) => Promise<void>;
+  /** Mints a fresh single-use WebSocket URL for the active account (refreshing the access token if needed). */
+  getFreshWsUrl: () => Promise<string>;
   updateAccountBalance: (accountId: string, balance: string, currency?: string) => void;
   error: string | null;
 }
@@ -232,10 +235,12 @@ export function useAuth(): UseAuthReturn {
               storedAuth.refresh_token,
               getAuthConfig().clientId
             );
-          } catch {
-            // Refresh failed (token revoked/expired) — fall back to
-            // unauthenticated (public WS)
-            clearAllAuthData();
+          } catch (err) {
+            // Refresh failed. A rejected token was already wiped by
+            // refreshAccessToken; a transient failure (network / 5xx) keeps
+            // the stored session so the next load can retry. Either way
+            // fall back to the public WS for now.
+            if (err instanceof OAuthError ? err.fatal : false) clearAllAuthData();
             setAuthState('unauthenticated');
             return;
           }
@@ -305,12 +310,14 @@ export function useAuth(): UseAuthReturn {
       if (authInfo.expires_at && Date.now() / 1000 > authInfo.expires_at) {
         try {
           authInfo = await refreshAccessToken(authInfo.refresh_token, getAuthConfig().clientId);
-        } catch {
-          // The refresh token itself is dead (revoked/expired) — this is a
-          // genuine session end, not a transient hiccup.
-          clearAllAuthData();
-          setAuthState('unauthenticated');
-          setWsUrl(undefined);
+        } catch (err) {
+          // Only a rejected refresh token is a genuine session end; a
+          // network blip / 5xx leaves the session alone for the next try.
+          if (err instanceof OAuthError && err.fatal) {
+            clearAllAuthData();
+            setAuthState('unauthenticated');
+            setWsUrl(undefined);
+          }
           return;
         }
       }
@@ -329,6 +336,19 @@ export function useAuth(): UseAuthReturn {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [authState, fetchOTPUrl]);
+
+  // Used by the WebSocket on every automatic reconnect: OTP URLs are
+  // single-use, so the one the socket connected with can't be reused. Throws on
+  // failure so the socket backs off and retries instead of dialling a dead URL.
+  const getFreshWsUrl = useCallback(async (): Promise<string> => {
+    const accountId = activeAccountIdRef.current;
+    let authInfo = getRawAuthInfo();
+    if (!accountId || !authInfo) throw new Error('No active session');
+    if (authInfo.expires_at && Date.now() / 1000 > authInfo.expires_at) {
+      authInfo = await refreshAccessToken(authInfo.refresh_token, getAuthConfig().clientId);
+    }
+    return fetchOTPUrl(accountId, authInfo);
+  }, [fetchOTPUrl]);
 
   // Phase 1: Initiate login — includes partner attribution params, resolving a
   // fresh per-user Scaleo token via the BFF proxy when needed (non-blocking).
@@ -413,6 +433,7 @@ export function useAuth(): UseAuthReturn {
     signUp,
     logout,
     switchAccount,
+    getFreshWsUrl,
     updateAccountBalance,
     error,
   };
