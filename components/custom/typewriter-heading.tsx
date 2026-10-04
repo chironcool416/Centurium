@@ -27,6 +27,9 @@ const RESTART_PAUSE_MS = 700;
  * The full text is rendered invisibly underneath so the heading takes up its
  * final size from the start, and the page doesn't jump as letters appear.
  * Screen readers get the complete sentence immediately.
+ *
+ * This deliberately ignores the OS "reduce motion" setting: many desktops have
+ * it on by default, which made the typing silently never play there.
  */
 export function TypewriterHeading({
   text,
@@ -42,12 +45,6 @@ export function TypewriterHeading({
   useEffect(() => {
     if (!active || total === 0) {
       setCount(0);
-      return;
-    }
-
-    // Respect "reduce motion": show the whole line with a steady cursor.
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      setCount(total);
       return;
     }
 
