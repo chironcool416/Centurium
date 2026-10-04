@@ -57,7 +57,19 @@ The app is available at `http://localhost:3000`.
 ## Step 4: Build for Production
 
 ```bash
-npm run build
+npm run build   # produces an optimized build in /.next
+npm start       # serves it on http://localhost:3000
 ```
 
-This produces a fully static export in the `/out` directory. Serve the contents of `/out` from any web server or static file host.
+`next.config.js` does not set `output: 'export'`, so this is a normal Next.js
+server build, not a static export. To host it as static files instead, add
+`output: 'export'` to `next.config.js` (the build then writes `/out`) and check
+that every page still builds.
+
+## Notes
+
+- Authenticated WebSocket URLs (OTPs) are single-use. The socket asks for a
+  fresh one on every automatic reconnect (`getFreshWsUrl` in `hooks/use-auth.ts`).
+- The bots (Martingale, Ra/Minerva, Differ) run in the browser tab. Closing the
+  tab stops them, and their P/L and loss-streak state is not persisted. If a bot
+  stops with "no response", check Reports for any contract it may have opened.
