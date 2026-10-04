@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult, Tick } from '@deriv/core';
 import type { ContractMode, OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
-import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
+import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use-phase-watchdog';
 
 /**
  * Native port of the "Eye of Ra" browser-extension bot logic (previously a
@@ -78,7 +78,7 @@ export type RaBarrier = 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3
  *  keeps the run going — Ra re-fires the same side immediately, with no
  *  wait, until Take Profit/Stop Loss stops it outright. */
 export type RaRunMode = 'burst' | 'continuous';
-export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null;
+export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | TimeoutReason | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
  *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
@@ -412,7 +412,6 @@ export function useRaBot({
       logIdRef.current = 0;
       setDigitRecord([]);
       setStoppedReason(null);
-      setTimeoutPhase(null);
       setLastFired(null);
       setPhase('idle');
       sessionStartRef.current = Date.now();
@@ -612,11 +611,10 @@ export function useRaBot({
     // Never buy a proposal quoted for a different stake than the one we
     // just asked for (a stale quote would silently trade the wrong amount).
     const intended = activeTradeRef.current?.stake;
-    // Compare against the exact string we sent via setStake (toFixed(2)),
-    // not Math.round(x*100)/100 — the two disagree by a cent on stakes like
-    // 0.735, which made this guard reject the right quote forever and the
-    // watchdog stop the bot with "No response".
-    if (intended !== undefined && Math.abs(proposal.askPrice - parseFloat(intended.toFixed(2))) > 0.005) return;
+    // Compare with exactly what was typed into the stake box (toFixed(2)) — that is
+    // the amount Deriv quotes. Rounding any other way disagrees on values like
+    // 0.735 (sent as 0.73) and the bot would wait forever for a "match".
+    if (intended !== undefined && Math.abs(proposal.askPrice - Number(intended.toFixed(2))) > 0.005) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
@@ -777,11 +775,7 @@ export function useRaBot({
 
   // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
   // "running" forever — stop it so the user can check Reports and restart.
-  const [timeoutPhase, setTimeoutPhase] = useState<string | null>(null);
-  usePhaseWatchdog(enabled, phase, (stuckPhase) => {
-    setTimeoutPhase(stuckPhase);
-    stop('timeout');
-  });
+  usePhaseWatchdog(enabled, phase, (stuckPhase) => stop(timeoutReason(stuckPhase)));
 
   return {
     enabled,
@@ -790,7 +784,6 @@ export function useRaBot({
     pnl,
     digitRecord,
     stoppedReason,
-    timeoutPhase,
     armedSide,
     confirmProgress,
     lastFired,
