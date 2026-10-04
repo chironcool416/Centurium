@@ -337,8 +337,12 @@ function getBotStatusLabel(phase: BotPhase, localize: (t: string) => string): st
       return localize('Stopped — trade failed');
     case 'stopped-funds':
       return localize('Stopped — insufficient funds');
-    case 'stopped-timeout':
-      return localize('Stopped — no response, check Reports');
+    case 'stopped-timeout-proposal':
+      return localize('Stopped — no price received, check Reports');
+    case 'stopped-timeout-buy':
+      return localize('Stopped — buy not confirmed, check Reports');
+    case 'stopped-timeout-settlement':
+      return localize('Stopped — no trade result, check Reports');
     default:
       return localize('Not running');
   }
@@ -382,7 +386,7 @@ function getRaStatusLabel(
 }
 
 function getRaStoppedLabel(
-  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null,
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout-proposal' | 'timeout-buy' | 'timeout-settlement' | null,
   localize: (t: string) => string
 ): string | null {
   switch (reason) {
@@ -394,8 +398,12 @@ function getRaStoppedLabel(
       return localize('Stopped: Stop Loss');
     case 'insufficient-funds':
       return localize('Stopped: Insufficient Funds');
-    case 'timeout':
-      return localize('Stopped: No response — check Reports');
+    case 'timeout-proposal':
+      return localize('Stopped: No price received — check Reports');
+    case 'timeout-buy':
+      return localize('Stopped: Buy not confirmed — check Reports');
+    case 'timeout-settlement':
+      return localize('Stopped: No trade result — check Reports');
     default:
       return null;
   }
@@ -472,7 +480,7 @@ function getDifferStatusLabel(
 }
 
 function getDifferStoppedLabel(
-  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null,
+  reason: 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout-proposal' | 'timeout-buy' | 'timeout-settlement' | null,
   localize: (t: string) => string
 ): string | null {
   switch (reason) {
@@ -484,8 +492,12 @@ function getDifferStoppedLabel(
       return localize('Stopped: Stop Loss');
     case 'insufficient-funds':
       return localize('Stopped: Insufficient Funds');
-    case 'timeout':
-      return localize('Stopped: No response — check Reports');
+    case 'timeout-proposal':
+      return localize('Stopped: No price received — check Reports');
+    case 'timeout-buy':
+      return localize('Stopped: Buy not confirmed — check Reports');
+    case 'timeout-settlement':
+      return localize('Stopped: No trade result — check Reports');
     default:
       return null;
   }
