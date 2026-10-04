@@ -83,7 +83,7 @@ export function useBaseTrading({
     isLoading: symbolsLoading,
   } = useActiveSymbols(ws, isConnected, contractTypes);
 
-  const { currentTick, prices, pipSize } = useTicks(ws, isConnected, activeSymbol);
+  const { currentTick, prices, pipSize, error: tickError } = useTicks(ws, isConnected, activeSymbol);
 
   // Surface WS-level errors as toasts. Buy and sell errors are handled by
   // their own hooks and are excluded here to avoid double-reporting.
@@ -129,7 +129,7 @@ export function useBaseTrading({
     ws,
     isConnected,
     isLoading: !isConnected || symbolsLoading,
-    error: null,
+    error: tickError,
     symbols,
     activeSymbol,
     selectSymbol,
