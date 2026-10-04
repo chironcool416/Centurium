@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult, Tick } from '@deriv/core';
 import type { ContractMode, OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
-import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
+import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use-phase-watchdog';
 
 /**
  * "Differ" bot: watches the live tick stream for a digit repeating N times
@@ -41,7 +41,7 @@ import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
  */
 
 export type DifferTradeType = 'differs' | 'matches';
-export type DifferStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null;
+export type DifferStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | TimeoutReason | null;
 export type DifferPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
  *  Distinct from DifferStopReason: hitting Take Profit/Stop Loss now stops
@@ -377,7 +377,10 @@ export function useDifferBot({
     // Never buy a proposal quoted for a different stake than the one we
     // just asked for (a stale quote would silently trade the wrong amount).
     const intended = activeTradeRef.current?.stake;
-    if (intended !== undefined && Math.abs(proposal.askPrice - Math.round(intended * 100) / 100) > 0.01) return;
+    // Compare with exactly what was typed into the stake box (toFixed(2)) — that is
+    // the amount Deriv quotes. Rounding any other way disagrees on values like
+    // 0.735 (sent as 0.73) and the bot would wait forever for a "match".
+    if (intended !== undefined && Math.abs(proposal.askPrice - Number(intended.toFixed(2))) > 0.005) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
@@ -512,7 +515,7 @@ export function useDifferBot({
 
   // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
   // "running" forever — stop it so the user can check Reports and restart.
-  usePhaseWatchdog(enabled, phase, () => stop('timeout'));
+  usePhaseWatchdog(enabled, phase, (stuckPhase) => stop(timeoutReason(stuckPhase)));
 
   return {
     enabled,
