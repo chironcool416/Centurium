@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult, Tick } from '@deriv/core';
 import type { ContractMode, OpenPosition } from '@/lib/types';
 import { getLastDigit } from '@/lib/digit-stats';
+import { usePhaseWatchdog } from '@/hooks/use-phase-watchdog';
 
 /**
  * Native port of the "Eye of Ra" browser-extension bot logic (previously a
@@ -77,7 +78,7 @@ export type RaBarrier = 'Superior 3' | 'Inferior 6' | 'Superior 6' | 'Inferior 3
  *  keeps the run going — Ra re-fires the same side immediately, with no
  *  wait, until Take Profit/Stop Loss stops it outright. */
 export type RaRunMode = 'burst' | 'continuous';
-export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | null;
+export type RaStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | 'timeout' | null;
 export type RaPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 /** Why the most recently completed burst ended — for a transient UI note.
  *  Distinct from RaStopReason: reaching Take Profit/Stop Loss now stops the
@@ -386,7 +387,9 @@ export function useRaBot({
   }, [clearArmTimer]);
 
   const pushLog = useCallback((entry: Omit<RaLogEntry, 'id' | 'time'>) => {
-    setLog((prev) => [...prev.slice(-49), { ...entry, id: logIdRef.current++, time: Date.now() }]);
+    // Take the id outside the updater: updaters must be pure (Strict Mode runs them twice).
+    const id = logIdRef.current++;
+    setLog((prev) => [...prev.slice(-49), { ...entry, id, time: Date.now() }]);
   }, []);
 
   const start = useCallback(
@@ -605,6 +608,10 @@ export function useRaBot({
     }
     if (!proposal) return;
     if (!skipLoadingWaitRef.current && !sawProposalLoadingRef.current) return;
+    // Never buy a proposal quoted for a different stake than the one we
+    // just asked for (a stale quote would silently trade the wrong amount).
+    const intended = activeTradeRef.current?.stake;
+    if (intended !== undefined && Math.abs(proposal.askPrice - Math.round(intended * 100) / 100) > 0.01) return;
     setPhase('awaiting-buy');
     buyContract();
   }, [phase, proposal, isProposalLoading, buyContract]);
@@ -762,6 +769,10 @@ export function useRaBot({
       setPhase('idle');
     }
   }, [phase, openPositions, placeTrade, pushLog, stop]);
+
+  // A stuck phase (dropped socket, lost reply) would otherwise leave the bot
+  // "running" forever — stop it so the user can check Reports and restart.
+  usePhaseWatchdog(enabled, phase, () => stop('timeout'));
 
   return {
     enabled,
