@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Public homepage. Simple welcome screen with entry points into the four
+ * Public homepage. Simple welcome screen with entry points into the
  * functional apps (Digits manual trading, the Operations/analysis view,
- * the Minerva automated bot, and the AI Scanner).
+ * the Minerva automated bot, the AI Scanner, and the Even/Odd bot).
  * Doesn't require auth — Header shows Log in / Sign up until the user
  * authenticates from inside one of the apps.
  */
@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Localize } from '@deriv-com/translations';
-import { LineChart, Zap, Shield, Radar } from 'lucide-react';
+import { LineChart, Zap, Shield, Radar, Binary } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Header } from '@/components/custom/header';
@@ -30,7 +30,7 @@ function resolveAppName(): string {
   return process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'Deriv Trading';
 }
 
-type HomeCardKey = 'digits' | 'robot' | 'minerva' | 'scanner';
+type HomeCardKey = 'digits' | 'robot' | 'minerva' | 'scanner' | 'evenodd';
 
 /**
  * Premium hover micro-interaction for the two entry cards below.
@@ -109,6 +109,7 @@ export default function HomePage() {
   const robotCard = getHomeCardProps('robot');
   const minervaCard = getHomeCardProps('minerva');
   const scannerCard = getHomeCardProps('scanner');
+  const evenOddCard = getHomeCardProps('evenodd');
 
   // The intro splash sits on top of the page for ~5s before fading out, but
   // these cards mount immediately underneath it. Without this gate, the
@@ -165,7 +166,7 @@ export default function HomePage() {
             <Localize i18n_default_text="Trade digit contracts manually, or open the analysis view to track live ticks and place trades from one panel." />
           </p>
 
-          <div className="mt-10 grid w-full max-w-6xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid w-full max-w-7xl gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <div style={panelEntranceStyle(0)}>
             <Card
               className={`panel-glow bg-card/30 backdrop-blur-md text-left ${digitsCard.className}`}
@@ -292,6 +293,39 @@ export default function HomePage() {
                 >
                   <Link href="/scanner">
                     <Localize i18n_default_text="Open AI Scanner" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+            </div>
+
+            <div style={panelEntranceStyle(520)}>
+            <Card
+              className={`panel-glow bg-card/30 backdrop-blur-md text-left ${evenOddCard.className}`}
+              style={evenOddCard.style}
+              onMouseEnter={evenOddCard.onMouseEnter}
+              onMouseLeave={evenOddCard.onMouseLeave}
+              onFocus={evenOddCard.onFocus}
+              onBlur={evenOddCard.onBlur}
+            >
+              <div aria-hidden className={evenOddCard.overlayClassName} />
+              <CardContent className="flex flex-col gap-3 pt-6">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-primary">
+                  <Binary className="h-5 w-5" />
+                </div>
+                <h2 className="text-base font-semibold text-foreground">
+                  <Localize i18n_default_text="Even/Odd" />
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  <Localize i18n_default_text="Run-detection bot — waits for a run of odd or even digits in the same over/under half, then trades Even/Odd with the trend or against it." />
+                </p>
+                <Button
+                  asChild
+                  variant="outline"
+                  className="mt-1 w-full hover:border-primary hover:bg-primary hover:text-primary-foreground"
+                >
+                  <Link href="/evenodd">
+                    <Localize i18n_default_text="Open Even/Odd" />
                   </Link>
                 </Button>
               </CardContent>
