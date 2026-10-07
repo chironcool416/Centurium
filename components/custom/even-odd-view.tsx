@@ -37,6 +37,7 @@ import {
 import { MinervaVictoryDialog } from '@/components/custom/minerva-victory-dialog';
 import { MinervaDefeatDialog } from '@/components/custom/minerva-defeat-dialog';
 import { MinervaInsufficientFundsDialog } from '@/components/custom/minerva-insufficient-funds-dialog';
+import { MinervaSettingsProfilesDialog } from '@/components/custom/minerva-settings-profiles-dialog';
 import type {
   ActiveSymbol,
   Tick,
@@ -107,6 +108,34 @@ export interface EvenOddViewProps {
 
 const HISTORY_WINDOW = 100;
 const RECENT_DIGITS_SHOWN = 26;
+const EO_SETTINGS_PROFILES_STORAGE_KEY = 'centurium:evenodd-settings-profiles';
+const EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY = 'centurium:evenodd-settings-active-profile';
+
+interface SavedEoSettings {
+  duration: number;
+  streakCount: string;
+  confirmationStreak: string;
+  watchParity: EoWatchParity;
+  watchRange: EoWatchRange;
+  initialStake: string;
+  stakeMultiplier: string;
+  martingaleAfterLosses: string;
+  armTimeLimitSeconds: string;
+  tradingMode: EoTradingMode;
+  runMode: EoRunMode;
+  takeProfit: string;
+  stopLoss: string;
+  runTakeProfit: string;
+}
+
+/** A named, timestamped settings snapshot — one entry per saved profile. */
+interface EoSettingsProfileRecord {
+  name: string;
+  savedAt: number;
+  settings: SavedEoSettings;
+}
+
+type EoSettingsProfilesMap = Record<string, EoSettingsProfileRecord>;
 
 const TOGGLE_ITEM =
   'flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground';
@@ -475,6 +504,116 @@ export function EvenOddView({
   const [stopLoss, setStopLoss] = useState('0');
   const [runTakeProfit, setRunTakeProfit] = useState('0');
 
+  const [eoProfiles, setEoProfiles] = useState<EoSettingsProfilesMap>({});
+  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
+  const [profilesDialogOpen, setProfilesDialogOpen] = useState(false);
+
+  const applySettings = (saved: Partial<SavedEoSettings>) => {
+    if (typeof saved.duration === 'number') setDuration(saved.duration);
+    if (typeof saved.streakCount === 'string') setStreakCount(saved.streakCount);
+    if (typeof saved.confirmationStreak === 'string') setConfirmationStreak(saved.confirmationStreak);
+    if (typeof saved.watchParity === 'string') setWatchParity(saved.watchParity);
+    if (typeof saved.watchRange === 'string') setWatchRange(saved.watchRange);
+    if (typeof saved.initialStake === 'string') setInitialStake(saved.initialStake);
+    if (typeof saved.stakeMultiplier === 'string') setStakeMultiplier(saved.stakeMultiplier);
+    if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
+    if (typeof saved.armTimeLimitSeconds === 'string') setArmTimeLimitSeconds(saved.armTimeLimitSeconds);
+    if (typeof saved.tradingMode === 'string') setTradingMode(saved.tradingMode);
+    if (typeof saved.runMode === 'string') setRunMode(saved.runMode);
+    if (typeof saved.takeProfit === 'string') setTakeProfit(saved.takeProfit);
+    if (typeof saved.stopLoss === 'string') setStopLoss(saved.stopLoss);
+    if (typeof saved.runTakeProfit === 'string') setRunTakeProfit(saved.runTakeProfit);
+  };
+
+  const currentSettingsSnapshot = (): SavedEoSettings => ({
+    duration,
+    streakCount,
+    confirmationStreak,
+    watchParity,
+    watchRange,
+    initialStake,
+    stakeMultiplier,
+    martingaleAfterLosses,
+    armTimeLimitSeconds,
+    tradingMode,
+    runMode,
+    takeProfit,
+    stopLoss,
+    runTakeProfit,
+  });
+
+  const persistProfiles = (next: EoSettingsProfilesMap) => {
+    window.localStorage.setItem(EO_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
+  };
+
+  // Load any saved profiles once on mount, and re-apply the last one used.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(EO_SETTINGS_PROFILES_STORAGE_KEY);
+      const map: EoSettingsProfilesMap = raw ? (JSON.parse(raw) as EoSettingsProfilesMap) : {};
+      setEoProfiles(map);
+
+      const lastActive = window.localStorage.getItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+      if (lastActive && map[lastActive]) {
+        applySettings(map[lastActive].settings);
+        setActiveProfileName(lastActive);
+      }
+    } catch {
+      // Ignore malformed/unavailable storage — fields just keep their defaults.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveProfile = (name: string) => {
+    try {
+      const next: EoSettingsProfilesMap = {
+        ...eoProfiles,
+        [name]: { name, savedAt: Date.now(), settings: currentSettingsSnapshot() },
+      };
+      persistProfiles(next);
+      setEoProfiles(next);
+      setActiveProfileName(name);
+      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      toast.success(localize('Saved profile "{{name}}"', { name }));
+    } catch {
+      toast.error(localize('Could not save settings on this device.'));
+    }
+  };
+
+  const handleLoadProfile = (name: string) => {
+    const profile = eoProfiles[name];
+    if (!profile) return;
+    applySettings(profile.settings);
+    setActiveProfileName(name);
+    try {
+      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+    } catch {
+      // Non-fatal — the settings are already applied in-memory either way.
+    }
+    toast.success(localize('Loaded profile "{{name}}"', { name }));
+    setProfilesDialogOpen(false);
+  };
+
+  const handleDeleteProfile = (name: string) => {
+    const next = { ...eoProfiles };
+    delete next[name];
+    try {
+      persistProfiles(next);
+    } catch {
+      // Ignore — in-memory state below still reflects the deletion this session.
+    }
+    setEoProfiles(next);
+    if (activeProfileName === name) {
+      setActiveProfileName(null);
+      try {
+        window.localStorage.removeItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+      } catch {
+        // Non-fatal.
+      }
+    }
+    toast.success(localize('Deleted profile "{{name}}"', { name }));
+  };
+
   const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
   const stats = useMemo(() => computeDigitStats(priceHistory, pipSize), [priceHistory, pipSize]);
   const last25 = useMemo(
@@ -621,6 +760,15 @@ export function EvenOddView({
         onOpenChange={setInsufficientOpen}
         onContinue={() => setInsufficientOpen(false)}
         durationMs={bot.sessionDurationMs}
+      />
+      <MinervaSettingsProfilesDialog
+        open={profilesDialogOpen}
+        onOpenChange={setProfilesDialogOpen}
+        profiles={eoProfiles}
+        activeProfileName={activeProfileName}
+        onSave={handleSaveProfile}
+        onLoad={handleLoadProfile}
+        onDelete={handleDeleteProfile}
       />
 
       <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
@@ -976,6 +1124,15 @@ export function EvenOddView({
                 </div>
               )}
             </fieldset>
+
+            <Button
+              className="w-full"
+              variant="outline"
+              onClick={() => setProfilesDialogOpen(true)}
+            >
+              <Localize i18n_default_text="Settings profiles" />
+              {activeProfileName ? ` — ${activeProfileName}` : ''}
+            </Button>
 
             <Button
               className="w-full"
