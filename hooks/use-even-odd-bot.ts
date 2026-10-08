@@ -30,15 +30,23 @@ import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use
  * in the same class). 0 (the default) means fire the moment the run is
  * complete.
  *
- * EXECUTION. The trade is always an Even or Odd contract (no barrier):
- * Trend trades the parity of the detected class (odd-* → Odd, even-* →
- * Even); Counter trades the opposite parity (e.g. 3 3 1 3 = odd-under →
- * trades Even; 2 2 4 0 = even-under → trades Odd). Neutral never trades.
+ * EXECUTION. What gets traded is picked by `tradeType`:
+ *   'eo'  — Even/Odd contract (no barrier). Trend trades the parity of the
+ *           detected class (odd-* → Odd, even-* → Even); Counter trades the
+ *           opposite parity (3 3 1 3 = odd-under → Even; 2 2 4 0 =
+ *           even-under → Odd).
+ *   'uo'  — Over 4 / Under 5 contract. Trend trades the range of the class
+ *           (*-over → Over 4, *-under → Under 5); Counter the opposite
+ *           (2 2 4 0 = even-under → Over 4; 7 9 5 7 = odd-over → Under 5).
+ *   'alt' — alternates 'eo' then 'uo' then 'eo'… on every trade placed
+ *           (Trend/Counter applied to each), starting with 'eo'.
+ * Neutral never trades.
  *
  * Burst / Continuous / martingale / TP / SL behave exactly as in Ra.
  */
 
-export type EoSide = 'even' | 'odd' | null;
+export type EoSide = 'even' | 'odd' | 'over' | 'under' | null;
+export type EoTradeType = 'eo' | 'uo' | 'alt';
 export type EoClass = 'odd-over' | 'even-over' | 'odd-under' | 'even-under';
 export type EoDetectionClass = EoClass | null;
 export type EoTradingMode = 'trend' | 'neutral' | 'counter';
@@ -48,7 +56,7 @@ export type EoWatchRange = 'both' | 'over' | 'under';
 export type EoStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | TimeoutReason | null;
 export type EoPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 export type EoBurstOutcome = 'won' | 'error' | null;
-export type EoBarrier = 'Even' | 'Odd';
+export type EoBarrier = 'Even' | 'Odd' | 'Over 4' | 'Under 5';
 
 export interface EoLogEntry {
   id: number;
@@ -77,6 +85,8 @@ export interface EoBotConfig {
   martingaleStartAfter: number;
   armTimeLimitSeconds?: number;
   tradingMode: EoTradingMode;
+  /** What to trade: Even/Odd, Over 4/Under 5, or alternate. Defaults to 'eo'. */
+  tradeType?: EoTradeType;
   takeProfit: number;
   stopLoss: number;
   runTakeProfit?: number;
@@ -88,6 +98,7 @@ interface UseEvenOddBotParams {
   pipSize: number;
   setStake: (value: string) => void;
   setContractMode: (mode: ContractMode) => void;
+  setSelectedDigit: (digit: number) => void;
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
@@ -113,8 +124,12 @@ export function eoClassOf(
   return `${parity}-${range}` as EoClass;
 }
 
-export function eoParityOfClass(cls: EoClass): Exclude<EoSide, null> {
+export function eoParityOfClass(cls: EoClass): 'odd' | 'even' {
   return cls.startsWith('odd') ? 'odd' : 'even';
+}
+
+export function eoRangeOfClass(cls: EoClass): 'over' | 'under' {
+  return cls.endsWith('over') ? 'over' : 'under';
 }
 
 function eoStakeFor(cfg: EoBotConfig, lossStreak: number): number {
@@ -127,6 +142,7 @@ export function useEvenOddBot({
   pipSize,
   setStake,
   setContractMode,
+  setSelectedDigit,
   proposal,
   isProposalLoading,
   buyContract,
@@ -176,6 +192,7 @@ export function useEvenOddBot({
     side: EoSide;
     signalClass: EoDetectionClass;
     contractMode: ContractMode;
+    selectedDigit: number | null;
     barrier: EoBarrier;
     stake: number;
   } | null>(null);
@@ -187,6 +204,8 @@ export function useEvenOddBot({
   const lastProcessedEpochRef = useRef<number | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   const lossStreakRef = useRef(0);
+  // ALT trade type: false → next trade is Even/Odd, true → Over 4/Under 5.
+  const altNextIsUoRef = useRef(false);
   const balanceRef = useRef<number | null>(balance);
   useEffect(() => {
     balanceRef.current = balance;
@@ -248,6 +267,7 @@ export function useEvenOddBot({
       lastProcessedEpochRef.current = null;
       pendingContractIdRef.current = null;
       lossStreakRef.current = 0;
+      altNextIsUoRef.current = false;
       lastFireKeyRef.current = null;
       skipLoadingWaitRef.current = false;
       setPnl(0);
@@ -284,26 +304,53 @@ export function useEvenOddBot({
   );
 
   const placeTrade = useCallback(
-    (side: Exclude<EoSide, null>, signalClass: Exclude<EoDetectionClass, null>) => {
+    (signalClass: Exclude<EoDetectionClass, null>) => {
       const cfg = cfgRef.current;
       const stake = eoStakeFor(cfg, lossStreakRef.current);
       setStake(stake.toFixed(2));
 
-      const contractMode: ContractMode = side === 'odd' ? 'DIGITODD' : 'DIGITEVEN';
-      const barrier: EoBarrier = side === 'odd' ? 'Odd' : 'Even';
+      // Which contract family this trade uses. ALT flips on every trade placed.
+      const configured = cfg.tradeType ?? 'eo';
+      let useUo: boolean;
+      if (configured === 'alt') {
+        useUo = altNextIsUoRef.current;
+        altNextIsUoRef.current = !altNextIsUoRef.current;
+      } else {
+        useUo = configured === 'uo';
+      }
 
-      const fireKey = `${contractMode}:${stake.toFixed(2)}`;
+      const counter = cfg.tradingMode === 'counter';
+      let side: Exclude<EoSide, null>;
+      let contractMode: ContractMode;
+      let barrier: EoBarrier;
+      let selectedDigit: number | null = null;
+
+      if (useUo) {
+        const natural = eoRangeOfClass(signalClass);
+        side = counter ? (natural === 'over' ? 'under' : 'over') : natural;
+        contractMode = side === 'over' ? 'DIGITOVER' : 'DIGITUNDER';
+        selectedDigit = side === 'over' ? 4 : 5;
+        barrier = side === 'over' ? 'Over 4' : 'Under 5';
+      } else {
+        const natural = eoParityOfClass(signalClass);
+        side = counter ? (natural === 'odd' ? 'even' : 'odd') : natural;
+        contractMode = side === 'odd' ? 'DIGITODD' : 'DIGITEVEN';
+        barrier = side === 'odd' ? 'Odd' : 'Even';
+      }
+
+      const fireKey = `${contractMode}:${selectedDigit ?? '-'}:${stake.toFixed(2)}`;
       skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
       lastFireKeyRef.current = fireKey;
 
-      activeTradeRef.current = { side, signalClass, contractMode, barrier, stake };
+      activeTradeRef.current = { side, signalClass, contractMode, selectedDigit, barrier, stake };
       setContractMode(contractMode);
+      if (selectedDigit !== null) setSelectedDigit(selectedDigit);
       setLastFired({ side, barrier });
 
       sawProposalLoadingRef.current = false;
       setPhase('awaiting-proposal');
     },
-    [setStake, setContractMode]
+    [setStake, setContractMode, setSelectedDigit]
   );
 
   // --- Each genuinely new tick: update digit record, run streak, confirm
@@ -364,15 +411,11 @@ export function useEvenOddBot({
       const confirmedClass = armedClassRef.current;
 
       if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
-        const natural = eoParityOfClass(confirmedClass);
-        const tradeSide: Exclude<EoSide, null> =
-          cfg.tradingMode === 'trend' ? natural : natural === 'odd' ? 'even' : 'odd';
-
         burstPnlRef.current = 0;
         setBurstPnl(0);
         setBurstActive(true);
         setLastBurstOutcome(null);
-        placeTrade(tradeSide, confirmedClass);
+        placeTrade(confirmedClass);
 
         // Wipe the whole arm state — the next signal needs a fresh run.
         clearArmTimer();
@@ -494,7 +537,7 @@ export function useEvenOddBot({
           return;
         }
         setLastBurstOutcome('won');
-        placeTrade(active.side as Exclude<EoSide, null>, active.signalClass as Exclude<EoDetectionClass, null>);
+        placeTrade(active.signalClass as Exclude<EoDetectionClass, null>);
         return;
       }
 
@@ -513,7 +556,7 @@ export function useEvenOddBot({
         stop('insufficient-funds');
         return;
       }
-      placeTrade(active.side as Exclude<EoSide, null>, active.signalClass as Exclude<EoDetectionClass, null>);
+      placeTrade(active.signalClass as Exclude<EoDetectionClass, null>);
     } else {
       setPhase('idle');
     }
