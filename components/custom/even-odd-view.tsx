@@ -1,1416 +1,586 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
-import { toast } from 'sonner';
-import { Localize } from '@deriv-com/translations';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { SymbolSelector } from '@/components/custom/symbol-selector';
-import { TradeControls } from '@/components/trade-controls';
-import { PositionsTable } from '@/components/custom/positions-table';
-import { cn } from '@/lib/utils';
-import { useAppTranslations } from '@/components/custom/i18n-provider';
-import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
-import {
-  useEvenOddBot,
-  eoClassOf,
-  type EoPhase,
-  type EoStopReason,
-  type EoTradingMode,
-  type EoRunMode,
-  type EoWatchParity,
-  type EoWatchRange,
-  type EoDetectionClass,
-  type EoLogEntry,
-} from '@/hooks/use-even-odd-bot';
-import { MinervaVictoryDialog } from '@/components/custom/minerva-victory-dialog';
-import { MinervaDefeatDialog } from '@/components/custom/minerva-defeat-dialog';
-import { MinervaInsufficientFundsDialog } from '@/components/custom/minerva-insufficient-funds-dialog';
-import { MinervaSettingsProfilesDialog } from '@/components/custom/minerva-settings-profiles-dialog';
-import type {
-  ActiveSymbol,
-  Tick,
-  DurationLimits,
-  ProposalInfo,
-  BuyResult,
-  DerivWS,
-} from '@deriv/core';
-import type {
-  ContractMode,
-  TradeType,
-  DigitStats,
-  OpenPosition,
-  ClosedPosition,
-} from '@/lib/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ProposalInfo, BuyResult, Tick } from '@deriv/core';
+import type { ContractMode, OpenPosition } from '@/lib/types';
+import { getLastDigit } from '@/lib/digit-stats';
+import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use-phase-watchdog';
 
-const DIGIT_CONTRACT_TYPES = [
-  'DIGITMATCH',
-  'DIGITDIFF',
-  'DIGITOVER',
-  'DIGITUNDER',
-  'DIGITEVEN',
-  'DIGITODD',
-];
+/**
+ * Even/Odd bot. Same skeleton as the Eye of Ra bot (`use-ra-bot.ts`) —
+ * arm → (optional) confirm → burst of trades with its own martingale,
+ * Trend / Neutral / Counter, Burst / Continuous, ARM time limit, Take
+ * Profit / Stop Loss / Run TP, insufficient-funds stop — but with a
+ * different detection rule and a different contract.
+ *
+ * DETECTION. Every digit is put into one of four classes by combining its
+ * parity with the usual over4 / under5 split (over = 5-9, under = 0-4):
+ *
+ *   odd-over   5 7 9        even-over  6 8
+ *   odd-under  1 3          even-under 0 2 4
+ *
+ * A class "arms" once `streakCount` consecutive digits fall in it — e.g.
+ * with a count of 4, "7 9 5 7" arms odd-over, "3 3 1 3" arms odd-under,
+ * "2 2 4 0" arms even-under. Strict: any digit outside the class (even one
+ * of the same parity but the other range, like 7 9 5 6) breaks the run.
+ * `watchParity` / `watchRange` can narrow which of the four classes are
+ * allowed to arm at all; a digit in a disallowed class just interrupts.
+ *
+ * Like Ra, an optional Confirmation Streak follows arming (M more digits
+ * in the same class). 0 (the default) means fire the moment the run is
+ * complete.
+ *
+ * EXECUTION. What gets traded is picked by `tradeType`:
+ *   'eo'  — Even/Odd contract (no barrier). Trend trades the parity of the
+ *           detected class (odd-* → Odd, even-* → Even); Counter trades the
+ *           opposite parity (3 3 1 3 = odd-under → Even; 2 2 4 0 =
+ *           even-under → Odd).
+ *   'uo'  — Over 4 / Under 5 contract. Trend trades the range of the class
+ *           (*-over → Over 4, *-under → Under 5); Counter the opposite
+ *           (2 2 4 0 = even-under → Over 4; 7 9 5 7 = odd-over → Under 5).
+ *   'alt' — alternates 'eo' then 'uo' then 'eo'… on every trade placed
+ *           (Trend/Counter applied to each), starting with 'eo'.
+ * Neutral never trades.
+ *
+ * Burst / Continuous / martingale / TP / SL behave exactly as in Ra.
+ */
 
-type Tab = 'digits' | 'trades' | 'logs';
+export type EoSide = 'even' | 'odd' | 'over' | 'under' | null;
+export type EoTradeType = 'eo' | 'uo' | 'alt';
+export type EoClass = 'odd-over' | 'even-over' | 'odd-under' | 'even-under';
+export type EoDetectionClass = EoClass | null;
+export type EoTradingMode = 'trend' | 'neutral' | 'counter';
+export type EoRunMode = 'burst' | 'continuous';
+export type EoWatchParity = 'both' | 'odd' | 'even';
+export type EoWatchRange = 'both' | 'over' | 'under';
+export type EoStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | TimeoutReason | null;
+export type EoPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
+export type EoBurstOutcome = 'won' | 'error' | null;
+export type EoBarrier = 'Even' | 'Odd' | 'Over 4' | 'Under 5';
 
-export interface EvenOddViewProps {
-  isConnected: boolean;
-  isAuthenticated: boolean;
-  balanceLabel: string | null;
-  balance: number | null;
-  ws: DerivWS | null;
+export interface EoLogEntry {
+  id: number;
+  time: number;
+  /** The class (e.g. odd-over) whose run actually triggered this burst. */
+  signalClass: EoDetectionClass;
+  /** The parity actually traded — equals the signal's parity in Trend mode, the opposite in Counter. */
+  side: EoSide;
+  barrier: EoBarrier | null;
+  digit: number | null;
+  exitSpot: number | null;
+  won: boolean;
+  stake: number;
+  profit: number;
+}
 
-  symbols: ActiveSymbol[];
-  activeSymbol: ActiveSymbol | null;
-  selectSymbol: (symbol: string) => void;
+export interface EoBotConfig {
+  /** N — consecutive digits of the same class required to arm. 2-20. */
+  streakCount: number;
+  /** M — extra consecutive same-class digits required after arming. 0 = fire immediately. */
+  confirmationStreak: number;
+  watchParity: EoWatchParity;
+  watchRange: EoWatchRange;
+  initialStake: number;
+  stakeMultiplier: number;
+  martingaleStartAfter: number;
+  armTimeLimitSeconds?: number;
+  tradingMode: EoTradingMode;
+  /** What to trade: Even/Odd, Over 4/Under 5, or alternate. Defaults to 'eo'. */
+  tradeType?: EoTradeType;
+  takeProfit: number;
+  stopLoss: number;
+  runTakeProfit?: number;
+  runMode?: EoRunMode;
+}
+
+interface UseEvenOddBotParams {
   currentTick: Tick | null;
-  prices: number[];
   pipSize: number;
-
-  tradeType: TradeType;
-  setTradeType: (type: TradeType) => void;
-  contractMode: ContractMode;
-  setContractMode: (mode: ContractMode) => void;
-  selectedDigit: number;
-  setSelectedDigit: (digit: number) => void;
-  stake: string;
   setStake: (value: string) => void;
-  duration: number;
-  setDuration: (value: number) => void;
-  durationLimits: DurationLimits;
+  setContractMode: (mode: ContractMode) => void;
+  setSelectedDigit: (digit: number) => void;
   proposal: ProposalInfo | null;
   isProposalLoading: boolean;
   buyContract: () => Promise<void>;
-  isBuying: boolean;
   buyResult: BuyResult | null;
   buyError: string | null;
   clearBuyResult: () => void;
-
   openPositions: OpenPosition[];
-  closedPositions: ClosedPosition[];
-  sellContract: (contractId: number, bidPrice: string) => Promise<void>;
-  sellingId: number | null;
-  sellError: string | null;
-  clearSellError: () => void;
+  balance: number | null;
 }
 
-const HISTORY_WINDOW = 100;
-const RECENT_DIGITS_SHOWN = 26;
-const EO_SETTINGS_PROFILES_STORAGE_KEY = 'centurium:evenodd-settings-profiles';
-const EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY = 'centurium:evenodd-settings-active-profile';
+const DIGIT_RECORD_SIZE = 30;
 
-interface SavedEoSettings {
-  duration: number;
-  streakCount: string;
-  confirmationStreak: string;
-  watchParity: EoWatchParity;
-  watchRange: EoWatchRange;
-  initialStake: string;
-  stakeMultiplier: string;
-  martingaleAfterLosses: string;
-  armTimeLimitSeconds: string;
-  tradingMode: EoTradingMode;
-  runMode: EoRunMode;
-  takeProfit: string;
-  stopLoss: string;
-  runTakeProfit: string;
+/** Class of a digit, or null when it falls outside what the config watches. */
+export function eoClassOf(
+  digit: number,
+  watchParity: EoWatchParity,
+  watchRange: EoWatchRange
+): EoDetectionClass {
+  const parity = digit % 2 === 0 ? 'even' : 'odd';
+  const range = digit > 4 ? 'over' : 'under';
+  if (watchParity !== 'both' && watchParity !== parity) return null;
+  if (watchRange !== 'both' && watchRange !== range) return null;
+  return `${parity}-${range}` as EoClass;
 }
 
-/** A named, timestamped settings snapshot — one entry per saved profile. */
-interface EoSettingsProfileRecord {
-  name: string;
-  savedAt: number;
-  settings: SavedEoSettings;
+export function eoParityOfClass(cls: EoClass): 'odd' | 'even' {
+  return cls.startsWith('odd') ? 'odd' : 'even';
 }
 
-type EoSettingsProfilesMap = Record<string, EoSettingsProfileRecord>;
-
-const TOGGLE_ITEM =
-  'flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground';
-const FIELD =
-  'space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]';
-
-// Same spring used for the equivalent glide animation on the standalone
-// Digits page, so the motion feels identical across both pages.
-const ROBOT_GLIDE_SPRING = { type: 'spring', stiffness: 340, damping: 30, mass: 0.7 } as const;
-
-function DigitFrequencyRow({
-  digitStats,
-  selectedDigit,
-  onSelect,
-  lastDigit,
-}: {
-  digitStats: DigitStats;
-  selectedDigit: number;
-  onSelect: (digit: number) => void;
-  /** The digit currently being generated by the live tick stream — when
-   *  provided, a glowing pointer glides to whichever button this matches,
-   *  matching the animation on the standalone Digits page. */
-  lastDigit?: number | null;
-}) {
-  const maxPct = Math.max(...digitStats.percentages);
-  const minPct = Math.min(...digitStats.percentages);
-  return (
-    <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
-      {digitStats.percentages.map((pct, digit) => {
-        const isSelected = digit === selectedDigit;
-        const isCurrent = digit === lastDigit;
-        const isHighest = digitStats.totalTicks > 0 && pct === maxPct;
-        const isLowest = digitStats.totalTicks > 0 && pct === minPct;
-        return (
-          <button
-            key={digit}
-            onClick={() => onSelect(digit)}
-            className={cn(
-              'relative flex flex-col items-center gap-1 rounded-md border py-2 transition-all duration-200',
-              isSelected
-                ? 'border-destructive ring-1 ring-destructive'
-                : isHighest
-                  ? 'border-emerald-500/60'
-                  : 'border-border',
-              'bg-muted/30 hover:bg-muted/60 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]'
-            )}
-          >
-            {isCurrent && (
-              <>
-                {/* Caret — glides above whichever digit is currently live */}
-                <motion.span
-                  layoutId="eo-digit-pointer-caret-live"
-                  transition={ROBOT_GLIDE_SPRING}
-                  className="pointer-events-none absolute -top-2.5 left-1/2 h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[6px] border-x-transparent border-t-primary"
-                />
-                {/* Glow ring — glides to sit around the currently live digit */}
-                <motion.span
-                  layoutId="eo-digit-pointer-glow-live"
-                  transition={ROBOT_GLIDE_SPRING}
-                  className="pointer-events-none absolute -inset-0.5 rounded-md ring-2 ring-primary shadow-[0_0_14px_2px] shadow-primary/50"
-                />
-              </>
-            )}
-            <span className="text-lg font-bold text-foreground">{digit}</span>
-            <span
-              className={cn(
-                'text-xs font-mono font-bold',
-                isHighest && 'text-emerald-400',
-                isLowest && 'text-rose-400',
-                !isHighest && !isLowest && 'text-foreground/80'
-              )}
-            >
-              {pct.toFixed(1)}%
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
+export function eoRangeOfClass(cls: EoClass): 'over' | 'under' {
+  return cls.endsWith('over') ? 'over' : 'under';
 }
 
-function DigitHistogram({ title, stats }: { title: string; stats: DigitStats }) {
-  const maxPct = Math.max(...stats.percentages, 1);
-  const highest = Math.max(...stats.percentages);
-  const lowest = Math.min(...stats.percentages);
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-xs font-semibold text-foreground/90">{title}</span>
-      <div className="flex items-end gap-1 h-28">
-        {stats.percentages.map((pct, digit) => {
-          const isHighest = stats.totalTicks > 0 && pct === highest;
-          const isLowest = stats.totalTicks > 0 && pct === lowest;
-          return (
-            <div
-              key={digit}
-              className="flex-1 flex flex-col items-center gap-1 rounded-md py-1 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]"
-            >
-              <span
-                className={cn(
-                  'text-[10px] font-bold',
-                  isHighest ? 'text-emerald-400' : isLowest ? 'text-rose-400' : 'text-foreground/80'
-                )}
-              >
-                {stats.totalTicks > 0 ? `${Math.round(pct)}%` : ''}
-              </span>
-              <div className="w-full h-20 flex items-end">
-                <div
-                  className={cn(
-                    'w-full rounded-sm',
-                    isHighest ? 'bg-emerald-500' : isLowest ? 'bg-rose-500/70' : 'bg-muted-foreground/50'
-                  )}
-                  style={{ height: `${Math.max((pct / maxPct) * 100, 3)}%` }}
-                />
-              </div>
-              <span className="text-[10px] font-semibold text-foreground/80">{digit}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+function eoStakeFor(cfg: EoBotConfig, lossStreak: number): number {
+  const lossesPastGrace = Math.max(0, lossStreak - cfg.martingaleStartAfter);
+  return cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
 }
 
-function TickSparkline({ prices }: { prices: number[] }) {
-  const points = prices.slice(-24);
-  if (points.length < 2) {
-    return (
-      <div className="h-24 flex items-center justify-center text-xs font-semibold text-foreground/90">
-        <Localize i18n_default_text="Waiting for enough ticks…" />
-      </div>
-    );
-  }
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const range = max - min || 1;
-  const w = 600;
-  const h = 90;
-  const coords = points.map((p, i) => {
-    const x = (i / (points.length - 1)) * w;
-    const y = h - ((p - min) / range) * (h - 16) - 8;
-    return [x, y] as const;
-  });
-  const path = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-24" preserveAspectRatio="none">
-      <path d={path} fill="none" stroke="currentColor" className="text-primary" strokeWidth={2} />
-      {coords.map(([x, y], i) => {
-        const isLast = i === coords.length - 1;
-        const isUp = i > 0 && points[i] >= points[i - 1];
-        return (
-          <circle
-            key={i}
-            cx={x}
-            cy={y}
-            r={isLast ? 4 : 2.5}
-            className={isUp ? 'fill-emerald-500' : 'fill-rose-500'}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
-type EoPanelKey = 'settings' | 'analysis' | 'manual';
-
-/**
- * Same premium hover micro-interaction used on the homepage's entry cards:
- * the hovered panel lifts/scales up and its `.panel-glow` breathing glow
- * gets a brighter overlay faded in on top (rather than swapping the
- * keyframes, which would make the glow jump instead of smoothly
- * intensifying). The other panels dim slightly while one is hovered.
- */
-function useEoPanelHover() {
-  const [hovered, setHovered] = useState<EoPanelKey | null>(null);
-
-  function panelProps(key: EoPanelKey) {
-    const isHovered = hovered === key;
-    const isDimmed = hovered !== null && hovered !== key;
-    return {
-      onMouseEnter: () => setHovered(key),
-      onMouseLeave: () =>
-        setHovered((current: EoPanelKey | null) => (current === key ? null : current)),
-      onFocus: () => setHovered(key),
-      onBlur: () =>
-        setHovered((current: EoPanelKey | null) => (current === key ? null : current)),
-      style: {
-        transform: isHovered ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
-        opacity: isDimmed ? 0.92 : 1,
-      },
-      className:
-        'relative transition-[transform,opacity] duration-300 ease-out will-change-transform',
-      overlayClassName:
-        'pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300 ease-out shadow-[0_14px_32px_-12px_rgba(0,0,0,0.35),0_0_0_1px_rgba(59,130,246,0.55),0_0_26px_4px_rgba(59,130,246,0.45),0_0_56px_14px_rgba(59,130,246,0.22)]' +
-        (isHovered ? ' opacity-100' : ' opacity-0'),
-    };
-  }
-
-  return panelProps;
-}
-
-function eoClassLabel(cls: EoDetectionClass, localize: (t: string) => string): string {
-  switch (cls) {
-    case 'odd-over':
-      return `${localize('Odd')} · ${localize('Over 4')}`;
-    case 'even-over':
-      return `${localize('Even')} · ${localize('Over 4')}`;
-    case 'odd-under':
-      return `${localize('Odd')} · ${localize('Under 5')}`;
-    case 'even-under':
-      return `${localize('Even')} · ${localize('Under 5')}`;
-    default:
-      return '';
-  }
-}
-
-function getStatusLabel(
-  phase: EoPhase,
-  armedClass: EoDetectionClass,
-  confirmProgress: number,
-  confirmationStreak: string,
-  runProgress: { cls: EoDetectionClass; count: number },
-  streakCount: string,
-  burstActive: boolean,
-  burstPnl: number,
-  localize: (t: string) => string
-): string {
-  const pnlText = burstActive ? ` (${burstPnl >= 0 ? '+' : ''}${burstPnl.toFixed(2)})` : '';
-  switch (phase) {
-    case 'awaiting-proposal':
-    case 'awaiting-buy':
-      return `${localize('Placing trade…')}${pnlText}`;
-    case 'awaiting-settlement':
-      return `${localize('Trade running…')}${pnlText}`;
-    default:
-      if (armedClass) {
-        return `${eoClassLabel(armedClass, localize)} ${localize('ARMED')} — ${localize(
-          'waiting for confirmation streak'
-        )} (${confirmProgress}/${confirmationStreak})`;
-      }
-      if (runProgress.cls && runProgress.count > 0) {
-        return `${localize('Watching…')} ${eoClassLabel(runProgress.cls, localize)} ${runProgress.count}/${streakCount}`;
-      }
-      return localize('Watching…');
-  }
-}
-
-function getStoppedLabel(reason: EoStopReason, localize: (t: string) => string): string | null {
-  switch (reason) {
-    case 'manual':
-      return localize('Stopped: Manual');
-    case 'take-profit':
-      return localize('Stopped: Take Profit');
-    case 'stop-loss':
-      return localize('Stopped: Stop Loss');
-    case 'insufficient-funds':
-      return localize('Stopped: Insufficient Funds');
-    case 'timeout-proposal':
-      return localize('Stopped: No price received — check Reports');
-    case 'timeout-buy':
-      return localize('Stopped: Buy not confirmed — check Reports');
-    case 'timeout-settlement':
-      return localize('Stopped: No trade result — check Reports');
-    default:
-      return null;
-  }
-}
-
-/** Odd digits green, even digits red; stronger shade = Over 4 (5-9), lighter
- *  = Under 5 (0-4). Digits outside the watched classes are muted. */
-function EoDigitRecord({
-  digits,
-  watchParity,
-  watchRange,
-}: {
-  digits: number[];
-  watchParity: EoWatchParity;
-  watchRange: EoWatchRange;
-}) {
-  if (digits.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-1 rounded-md bg-muted/30 p-2">
-      {digits.map((d, i) => {
-        const isNewest = i === digits.length - 1;
-        const cls = eoClassOf(d, watchParity, watchRange);
-        const colorClass =
-          cls === 'odd-over'
-            ? 'bg-emerald-500/45 text-emerald-300'
-            : cls === 'odd-under'
-              ? 'bg-emerald-500/15 text-emerald-400'
-              : cls === 'even-over'
-                ? 'bg-rose-500/45 text-rose-300'
-                : cls === 'even-under'
-                  ? 'bg-rose-500/15 text-rose-400'
-                  : 'bg-muted text-muted-foreground/70';
-        return (
-          <span
-            key={i}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold tabular-nums',
-              colorClass,
-              isNewest && 'ring-2 ring-primary'
-            )}
-          >
-            {d}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-export function EvenOddView({
-  isConnected,
-  isAuthenticated,
-  balanceLabel,
-  balance,
-  symbols,
-  activeSymbol,
-  selectSymbol,
+export function useEvenOddBot({
   currentTick,
-  prices,
   pipSize,
-  tradeType,
-  setTradeType,
-  contractMode,
-  setContractMode,
-  selectedDigit,
-  setSelectedDigit,
-  stake,
   setStake,
-  duration,
-  setDuration,
-  durationLimits,
+  setContractMode,
+  setSelectedDigit,
   proposal,
   isProposalLoading,
   buyContract,
-  isBuying,
   buyResult,
   buyError,
   clearBuyResult,
   openPositions,
-  closedPositions,
-  sellContract,
-  sellingId,
-  sellError,
-  clearSellError,
-}: EvenOddViewProps) {
-  const { localize } = useAppTranslations();
-  const [activeTab, setActiveTab] = useState<Tab>('digits');
-  const panelHover = useEoPanelHover();
-  const settingsPanel = panelHover('settings');
-  const analysisPanel = panelHover('analysis');
-  const manualPanel = panelHover('manual');
-
-  const [streakCount, setStreakCount] = useState('4');
-  const [confirmationStreak, setConfirmationStreak] = useState('0');
-  const [watchParity, setWatchParity] = useState<EoWatchParity>('both');
-  const [watchRange, setWatchRange] = useState<EoWatchRange>('both');
-  const [initialStake, setInitialStake] = useState('1');
-  const [stakeMultiplier, setStakeMultiplier] = useState('2.2');
-  const [martingaleAfterLosses, setMartingaleAfterLosses] = useState('0');
-  const [armTimeLimitSeconds, setArmTimeLimitSeconds] = useState('0');
-  const [tradingMode, setTradingMode] = useState<EoTradingMode>('neutral');
-  const [runMode, setRunMode] = useState<EoRunMode>('burst');
-  const [takeProfit, setTakeProfit] = useState('0');
-  const [stopLoss, setStopLoss] = useState('0');
-  const [runTakeProfit, setRunTakeProfit] = useState('0');
-
-  const [eoProfiles, setEoProfiles] = useState<EoSettingsProfilesMap>({});
-  const [activeProfileName, setActiveProfileName] = useState<string | null>(null);
-  const [profilesDialogOpen, setProfilesDialogOpen] = useState(false);
-
-  const applySettings = (saved: Partial<SavedEoSettings>) => {
-    if (typeof saved.duration === 'number') setDuration(saved.duration);
-    if (typeof saved.streakCount === 'string') setStreakCount(saved.streakCount);
-    if (typeof saved.confirmationStreak === 'string') setConfirmationStreak(saved.confirmationStreak);
-    if (typeof saved.watchParity === 'string') setWatchParity(saved.watchParity);
-    if (typeof saved.watchRange === 'string') setWatchRange(saved.watchRange);
-    if (typeof saved.initialStake === 'string') setInitialStake(saved.initialStake);
-    if (typeof saved.stakeMultiplier === 'string') setStakeMultiplier(saved.stakeMultiplier);
-    if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
-    if (typeof saved.armTimeLimitSeconds === 'string') setArmTimeLimitSeconds(saved.armTimeLimitSeconds);
-    if (typeof saved.tradingMode === 'string') setTradingMode(saved.tradingMode);
-    if (typeof saved.runMode === 'string') setRunMode(saved.runMode);
-    if (typeof saved.takeProfit === 'string') setTakeProfit(saved.takeProfit);
-    if (typeof saved.stopLoss === 'string') setStopLoss(saved.stopLoss);
-    if (typeof saved.runTakeProfit === 'string') setRunTakeProfit(saved.runTakeProfit);
-  };
-
-  const currentSettingsSnapshot = (): SavedEoSettings => ({
-    duration,
-    streakCount,
-    confirmationStreak,
-    watchParity,
-    watchRange,
-    initialStake,
-    stakeMultiplier,
-    martingaleAfterLosses,
-    armTimeLimitSeconds,
-    tradingMode,
-    runMode,
-    takeProfit,
-    stopLoss,
-    runTakeProfit,
+  balance,
+}: UseEvenOddBotParams) {
+  const [enabled, setEnabled] = useState(false);
+  const [phase, setPhase] = useState<EoPhase>('idle');
+  const [pnl, setPnl] = useState(0);
+  const [digitRecord, setDigitRecord] = useState<number[]>([]);
+  const [stoppedReason, setStoppedReason] = useState<EoStopReason>(null);
+  const [armedClass, setArmedClass] = useState<EoDetectionClass>(null);
+  const [confirmProgress, setConfirmProgress] = useState(0);
+  /** Length of the run currently building on the digit stream (0 when none). */
+  const [runProgress, setRunProgress] = useState<{ cls: EoDetectionClass; count: number }>({
+    cls: null,
+    count: 0,
   });
+  const [lastFired, setLastFired] = useState<{ side: EoSide; barrier: EoBarrier } | null>(null);
+  const [burstActive, setBurstActive] = useState(false);
+  const [burstPnl, setBurstPnl] = useState(0);
+  const [lastBurstOutcome, setLastBurstOutcome] = useState<EoBurstOutcome>(null);
+  const [log, setLog] = useState<EoLogEntry[]>([]);
+  const logIdRef = useRef(0);
+  const sessionStartRef = useRef<number | null>(null);
+  const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
 
-  const persistProfiles = (next: EoSettingsProfilesMap) => {
-    window.localStorage.setItem(EO_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
-  };
+  const cfgRef = useRef<EoBotConfig>({
+    streakCount: 4,
+    confirmationStreak: 0,
+    watchParity: 'both',
+    watchRange: 'both',
+    initialStake: 1,
+    stakeMultiplier: 1,
+    martingaleStartAfter: 0,
+    armTimeLimitSeconds: 0,
+    tradingMode: 'neutral',
+    takeProfit: 0,
+    stopLoss: 0,
+  });
+  const pnlRef = useRef(0);
+  const burstPnlRef = useRef(0);
+  const activeTradeRef = useRef<{
+    side: EoSide;
+    signalClass: EoDetectionClass;
+    contractMode: ContractMode;
+    selectedDigit: number | null;
+    barrier: EoBarrier;
+    stake: number;
+  } | null>(null);
 
-  // Load any saved profiles once on mount, and re-apply the last one used.
+  const armedClassRef = useRef<EoDetectionClass>(null);
+  const primaryStreakRef = useRef<{ cls: EoDetectionClass; count: number }>({ cls: null, count: 0 });
+  const confirmCountRef = useRef(0);
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastProcessedEpochRef = useRef<number | null>(null);
+  const pendingContractIdRef = useRef<number | null>(null);
+  const lossStreakRef = useRef(0);
+  // ALT trade type: false → next trade is Even/Odd, true → Over 4/Under 5.
+  const altNextIsUoRef = useRef(false);
+  const balanceRef = useRef<number | null>(balance);
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(EO_SETTINGS_PROFILES_STORAGE_KEY);
-      const map: EoSettingsProfilesMap = raw ? (JSON.parse(raw) as EoSettingsProfilesMap) : {};
-      setEoProfiles(map);
+    balanceRef.current = balance;
+  }, [balance]);
+  // See use-ra-bot.ts for why these two exist (stale-proposal guard and the
+  // "same contract/stake as last time never pulses loading" case).
+  const sawProposalLoadingRef = useRef(false);
+  const lastFireKeyRef = useRef<string | null>(null);
+  const skipLoadingWaitRef = useRef(false);
 
-      const lastActive = window.localStorage.getItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
-      if (lastActive && map[lastActive]) {
-        applySettings(map[lastActive].settings);
-        setActiveProfileName(lastActive);
-      }
-    } catch {
-      // Ignore malformed/unavailable storage — fields just keep their defaults.
+  const clearArmTimer = useCallback(() => {
+    if (armTimerRef.current !== null) {
+      clearTimeout(armTimerRef.current);
+      armTimerRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSaveProfile = (name: string) => {
-    try {
-      const next: EoSettingsProfilesMap = {
-        ...eoProfiles,
-        [name]: { name, savedAt: Date.now(), settings: currentSettingsSnapshot() },
-      };
-      persistProfiles(next);
-      setEoProfiles(next);
-      setActiveProfileName(name);
-      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
-      toast.success(localize('Saved profile "{{name}}"', { name }));
-    } catch {
-      toast.error(localize('Could not save settings on this device.'));
-    }
-  };
+  const scheduleArmTimer = useCallback(() => {
+    clearArmTimer();
+    const limit = cfgRef.current.armTimeLimitSeconds;
+    if (!limit || limit <= 0) return;
+    armTimerRef.current = setTimeout(() => {
+      armedClassRef.current = null;
+      primaryStreakRef.current = { cls: null, count: 0 };
+      confirmCountRef.current = 0;
+      setArmedClass(null);
+      setConfirmProgress(0);
+      setRunProgress({ cls: null, count: 0 });
+      armTimerRef.current = null;
+    }, limit * 1000);
+  }, [clearArmTimer]);
 
-  const handleLoadProfile = (name: string) => {
-    const profile = eoProfiles[name];
-    if (!profile) return;
-    applySettings(profile.settings);
-    setActiveProfileName(name);
-    try {
-      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
-    } catch {
-      // Non-fatal — the settings are already applied in-memory either way.
-    }
-    toast.success(localize('Loaded profile "{{name}}"', { name }));
-    setProfilesDialogOpen(false);
-  };
+  useEffect(() => {
+    return () => clearArmTimer();
+  }, [clearArmTimer]);
 
-  const handleDeleteProfile = (name: string) => {
-    const next = { ...eoProfiles };
-    delete next[name];
-    try {
-      persistProfiles(next);
-    } catch {
-      // Ignore — in-memory state below still reflects the deletion this session.
+  const resetTracking = useCallback(() => {
+    clearArmTimer();
+    armedClassRef.current = null;
+    primaryStreakRef.current = { cls: null, count: 0 };
+    confirmCountRef.current = 0;
+    setArmedClass(null);
+    setConfirmProgress(0);
+    setRunProgress({ cls: null, count: 0 });
+  }, [clearArmTimer]);
+
+  const pushLog = useCallback((entry: Omit<EoLogEntry, 'id' | 'time'>) => {
+    const id = logIdRef.current++;
+    setLog((prev) => [...prev.slice(-49), { ...entry, id, time: Date.now() }]);
+  }, []);
+
+  const start = useCallback(
+    (cfg: EoBotConfig) => {
+      cfgRef.current = cfg;
+      pnlRef.current = 0;
+      burstPnlRef.current = 0;
+      activeTradeRef.current = null;
+      resetTracking();
+      lastProcessedEpochRef.current = null;
+      pendingContractIdRef.current = null;
+      lossStreakRef.current = 0;
+      altNextIsUoRef.current = false;
+      lastFireKeyRef.current = null;
+      skipLoadingWaitRef.current = false;
+      setPnl(0);
+      setBurstPnl(0);
+      setBurstActive(false);
+      setLastBurstOutcome(null);
+      setLog([]);
+      logIdRef.current = 0;
+      setDigitRecord([]);
+      setStoppedReason(null);
+      setLastFired(null);
+      setPhase('idle');
+      sessionStartRef.current = Date.now();
+      setSessionDurationMs(null);
+      setEnabled(true);
+    },
+    [resetTracking]
+  );
+
+  const stop = useCallback(
+    (reason: EoStopReason = 'manual') => {
+      clearArmTimer();
+      setEnabled(false);
+      setStoppedReason(reason);
+      setPhase('idle');
+      setBurstActive(false);
+      pendingContractIdRef.current = null;
+      activeTradeRef.current = null;
+      setSessionDurationMs(
+        sessionStartRef.current !== null ? Date.now() - sessionStartRef.current : null
+      );
+    },
+    [clearArmTimer]
+  );
+
+  const placeTrade = useCallback(
+    (signalClass: Exclude<EoDetectionClass, null>) => {
+      const cfg = cfgRef.current;
+      const stake = eoStakeFor(cfg, lossStreakRef.current);
+      setStake(stake.toFixed(2));
+
+      // Which contract family this trade uses. ALT flips on every trade placed.
+      const configured = cfg.tradeType ?? 'eo';
+      let useUo: boolean;
+      if (configured === 'alt') {
+        useUo = altNextIsUoRef.current;
+        altNextIsUoRef.current = !altNextIsUoRef.current;
+      } else {
+        useUo = configured === 'uo';
+      }
+
+      const counter = cfg.tradingMode === 'counter';
+      let side: Exclude<EoSide, null>;
+      let contractMode: ContractMode;
+      let barrier: EoBarrier;
+      let selectedDigit: number | null = null;
+
+      if (useUo) {
+        const natural = eoRangeOfClass(signalClass);
+        side = counter ? (natural === 'over' ? 'under' : 'over') : natural;
+        contractMode = side === 'over' ? 'DIGITOVER' : 'DIGITUNDER';
+        selectedDigit = side === 'over' ? 4 : 5;
+        barrier = side === 'over' ? 'Over 4' : 'Under 5';
+      } else {
+        const natural = eoParityOfClass(signalClass);
+        side = counter ? (natural === 'odd' ? 'even' : 'odd') : natural;
+        contractMode = side === 'odd' ? 'DIGITODD' : 'DIGITEVEN';
+        barrier = side === 'odd' ? 'Odd' : 'Even';
+      }
+
+      const fireKey = `${contractMode}:${selectedDigit ?? '-'}:${stake.toFixed(2)}`;
+      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      lastFireKeyRef.current = fireKey;
+
+      activeTradeRef.current = { side, signalClass, contractMode, selectedDigit, barrier, stake };
+      setContractMode(contractMode);
+      if (selectedDigit !== null) setSelectedDigit(selectedDigit);
+      setLastFired({ side, barrier });
+
+      sawProposalLoadingRef.current = false;
+      setPhase('awaiting-proposal');
+    },
+    [setStake, setContractMode, setSelectedDigit]
+  );
+
+  // --- Each genuinely new tick: update digit record, run streak, confirm
+  // streak, and fire when the signal completes.
+  useEffect(() => {
+    if (!enabled || !currentTick) return;
+    if (lastProcessedEpochRef.current === currentTick.epoch) return;
+    lastProcessedEpochRef.current = currentTick.epoch;
+
+    const digit = getLastDigit(currentTick.quote, pipSize);
+    const cfg = cfgRef.current;
+    const cls = eoClassOf(digit, cfg.watchParity, cfg.watchRange);
+
+    setDigitRecord((prev) => [...prev.slice(-(DIGIT_RECORD_SIZE - 1)), digit]);
+
+    // Primary (arming) streak — strict, resets on any digit of another class.
+    const primary = primaryStreakRef.current;
+    if (primary.cls === cls) {
+      primary.count += 1;
+    } else {
+      primaryStreakRef.current = { cls, count: 1 };
     }
-    setEoProfiles(next);
-    if (activeProfileName === name) {
-      setActiveProfileName(null);
-      try {
-        window.localStorage.removeItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
-      } catch {
-        // Non-fatal.
+    setRunProgress(
+      primaryStreakRef.current.cls === null
+        ? { cls: null, count: 0 }
+        : { cls: primaryStreakRef.current.cls, count: primaryStreakRef.current.count }
+    );
+
+    // Confirmation streak — only once armed; strict, resets to 0 on a miss.
+    if (armedClassRef.current !== null) {
+      if (cls === armedClassRef.current) {
+        confirmCountRef.current = Math.min(confirmCountRef.current + 1, cfg.confirmationStreak);
+      } else {
+        confirmCountRef.current = 0;
       }
     }
-    toast.success(localize('Deleted profile "{{name}}"', { name }));
-  };
 
-  const priceHistory = useMemo(() => prices.slice(-HISTORY_WINDOW), [prices]);
-  const stats = useMemo(() => computeDigitStats(priceHistory, pipSize), [priceHistory, pipSize]);
-  const last25 = useMemo(
-    () => computeDigitStats(priceHistory.slice(-25), pipSize),
-    [priceHistory, pipSize]
-  );
-  const last50 = useMemo(
-    () => computeDigitStats(priceHistory.slice(-50), pipSize),
-    [priceHistory, pipSize]
-  );
-  const last100 = useMemo(
-    () => computeDigitStats(priceHistory.slice(-100), pipSize),
-    [priceHistory, pipSize]
-  );
-  const recentDigits = useMemo(
-    () => priceHistory.slice(-RECENT_DIGITS_SHOWN).map((p) => getLastDigit(p, pipSize)),
-    [priceHistory, pipSize]
-  );
-  const lastDigit = useMemo(
-    () => (currentTick ? getLastDigit(currentTick.quote, pipSize) : null),
-    [currentTick, pipSize]
-  );
+    // Arm / re-arm. A null class (a digit outside the watched set) is never
+    // a real signal, however many in a row.
+    if (primaryStreakRef.current.cls !== null && primaryStreakRef.current.count >= cfg.streakCount) {
+      const streakClass = primaryStreakRef.current.cls;
+      if (armedClassRef.current === null) {
+        armedClassRef.current = streakClass;
+        confirmCountRef.current = 0;
+        scheduleArmTimer();
+      } else if (streakClass !== armedClassRef.current) {
+        armedClassRef.current = streakClass;
+        confirmCountRef.current = 0;
+        scheduleArmTimer();
+      }
+    }
 
-  const bot = useEvenOddBot({
-    currentTick,
-    pipSize,
-    setStake,
-    setContractMode,
-    proposal,
-    isProposalLoading,
-    buyContract,
-    buyResult,
-    buyError,
-    clearBuyResult,
-    openPositions,
-    balance,
-  });
-  const botRunning = bot.running;
+    setArmedClass(armedClassRef.current);
+    setConfirmProgress(confirmCountRef.current);
 
-  const [victoryOpen, setVictoryOpen] = useState(false);
-  useEffect(() => {
-    if (bot.stoppedReason === 'take-profit') setVictoryOpen(true);
-  }, [bot.stoppedReason]);
-  const [defeatOpen, setDefeatOpen] = useState(false);
-  useEffect(() => {
-    if (bot.stoppedReason === 'stop-loss') setDefeatOpen(true);
-  }, [bot.stoppedReason]);
-  const [insufficientOpen, setInsufficientOpen] = useState(false);
-  useEffect(() => {
-    if (bot.stoppedReason === 'insufficient-funds') setInsufficientOpen(true);
-  }, [bot.stoppedReason]);
+    // Signal complete — open a burst (subject to Trading Mode).
+    if (armedClassRef.current !== null && confirmCountRef.current >= cfg.confirmationStreak) {
+      const confirmedClass = armedClassRef.current;
 
-  useEffect(() => {
-    const where: Record<string, string> = {
-      'timeout-proposal': 'waiting for a price quote',
-      'timeout-buy': 'waiting for the buy confirmation',
-      'timeout-settlement': 'waiting for the contract to settle',
-    };
-    const reason = bot.stoppedReason;
-    if (reason && where[reason]) {
-      toast.error(localize('Even/Odd stopped: no response'), {
-        description: `Stuck ${where[reason]}. Check Reports for any open contract before restarting.`,
-        duration: 15000,
-      });
+      if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
+        burstPnlRef.current = 0;
+        setBurstPnl(0);
+        setBurstActive(true);
+        setLastBurstOutcome(null);
+        placeTrade(confirmedClass);
+
+        // Wipe the whole arm state — the next signal needs a fresh run.
+        clearArmTimer();
+        armedClassRef.current = null;
+        primaryStreakRef.current = { cls: null, count: 0 };
+        confirmCountRef.current = 0;
+        setArmedClass(null);
+        setConfirmProgress(0);
+        setRunProgress({ cls: null, count: 0 });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bot.stoppedReason]);
+  }, [currentTick, enabled, pipSize, placeTrade]);
 
-  const handleStart = () => {
-    if (bot.running) {
-      bot.stop('manual');
-      toast.info(localize('Robot stopped'));
+  // --- Proposal ready → buy.
+  useEffect(() => {
+    if (phase !== 'awaiting-proposal') return;
+    if (isProposalLoading) {
+      sawProposalLoadingRef.current = true;
       return;
     }
-    const streak = parseInt(streakCount, 10);
-    const confirm = parseInt(confirmationStreak, 10);
-    if (!streak || streak < 2 || streak > 20) {
-      toast.error(localize('Enter a valid Streak Count (2-20) first.'));
-      return;
+    if (!proposal) return;
+    if (!skipLoadingWaitRef.current && !sawProposalLoadingRef.current) return;
+    const intended = activeTradeRef.current?.stake;
+    if (intended !== undefined && Math.abs(proposal.askPrice - Number(intended.toFixed(2))) > 0.005) return;
+    setPhase('awaiting-buy');
+    buyContract();
+  }, [phase, proposal, isProposalLoading, buyContract]);
+
+  // --- Bought → wait for settlement.
+  useEffect(() => {
+    if (phase !== 'awaiting-buy') return;
+    if (buyResult) {
+      pendingContractIdRef.current = buyResult.contractId;
+      clearBuyResult();
+      setPhase('awaiting-settlement');
+    } else if (buyError) {
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('error');
+      setPhase('idle');
     }
-    if (Number.isNaN(confirm) || confirm < 0 || confirm > 9) {
-      toast.error(localize('Enter a valid Confirmation Streak (0-9) first.'));
-      return;
-    }
-    const baseStake = parseFloat(initialStake);
-    if (!baseStake || baseStake <= 0) {
-      toast.error(localize('Enter a valid stake first.'));
-      return;
-    }
-    bot.start({
-      streakCount: streak,
-      confirmationStreak: confirm,
-      watchParity,
-      watchRange,
-      initialStake: baseStake,
-      stakeMultiplier: parseFloat(stakeMultiplier) || 1,
-      martingaleStartAfter: Math.max(0, parseInt(martingaleAfterLosses, 10) || 0),
-      armTimeLimitSeconds: Math.max(0, parseInt(armTimeLimitSeconds, 10) || 0),
-      tradingMode,
-      runMode,
-      takeProfit: parseFloat(takeProfit) || 0,
-      stopLoss: parseFloat(stopLoss) || 0,
-      runTakeProfit: parseFloat(runTakeProfit) || 0,
+  }, [phase, buyResult, buyError, clearBuyResult]);
+
+  // --- Pending contract closed → book it, then decide what happens next.
+  useEffect(() => {
+    if (phase !== 'awaiting-settlement' || pendingContractIdRef.current === null) return;
+    const pos = openPositions.find((p) => p.contract_id === pendingContractIdRef.current);
+    if (!pos) return;
+    const isClosed = !!pos.is_sold || !!pos.is_expired || pos.status !== 'open';
+    if (!isClosed) return;
+
+    const profit = parseFloat(pos.profit);
+    const won = profit > 0;
+    pendingContractIdRef.current = null;
+
+    const lastStreamTick =
+      pos.tick_stream && pos.tick_stream.length > 0
+        ? pos.tick_stream[pos.tick_stream.length - 1]
+        : null;
+    const exitSpot =
+      typeof pos.exit_spot === 'number'
+        ? pos.exit_spot
+        : lastStreamTick
+          ? lastStreamTick.tick
+          : null;
+    const exitDigit = exitSpot !== null ? getLastDigit(exitSpot, pipSize) : null;
+
+    const tradeInfo = activeTradeRef.current;
+    pushLog({
+      signalClass: tradeInfo?.signalClass ?? null,
+      side: tradeInfo?.side ?? null,
+      barrier: tradeInfo?.barrier ?? null,
+      digit: exitDigit,
+      exitSpot,
+      won,
+      stake: tradeInfo?.stake ?? 0,
+      profit,
     });
-    toast.info(localize('Robot started'), {
-      description:
-        tradingMode === 'neutral'
-          ? localize('Watching for digit runs — pick Trend or Counter to actually trade.')
-          : localize('Watching for digit runs on the digit stream.'),
-    });
+
+    lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
+
+    const nextPnl = pnlRef.current + profit;
+    pnlRef.current = nextPnl;
+    setPnl(nextPnl);
+
+    const nextBurstPnl = burstPnlRef.current + profit;
+    burstPnlRef.current = nextBurstPnl;
+    setBurstPnl(nextBurstPnl);
+
+    const cfg = cfgRef.current;
+    const hitTakeProfit = cfg.takeProfit > 0 && nextPnl >= cfg.takeProfit;
+    const hitStopLoss = cfg.stopLoss > 0 && nextPnl <= -cfg.stopLoss;
+
+    if (hitTakeProfit || hitStopLoss) {
+      stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
+      return;
+    }
+
+    const hitRunTakeProfit =
+      !!cfg.runTakeProfit && cfg.runTakeProfit > 0 && nextBurstPnl >= cfg.runTakeProfit;
+
+    if (hitRunTakeProfit) {
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('won');
+      setPhase('idle');
+      return;
+    }
+
+    const active = activeTradeRef.current;
+
+    if (won) {
+      if (cfg.runMode === 'continuous' && active) {
+        const nextStake = eoStakeFor(cfg, lossStreakRef.current);
+        const bal = balanceRef.current;
+        if (bal !== null && nextStake > bal + 0.001) {
+          stop('insufficient-funds');
+          return;
+        }
+        setLastBurstOutcome('won');
+        placeTrade(active.signalClass as Exclude<EoDetectionClass, null>);
+        return;
+      }
+
+      activeTradeRef.current = null;
+      setBurstActive(false);
+      setLastBurstOutcome('won');
+      setPhase('idle');
+      return;
+    }
+
+    // Lost — re-fire the same side at the martingale stake if affordable.
+    if (active) {
+      const nextStake = eoStakeFor(cfg, lossStreakRef.current);
+      const bal = balanceRef.current;
+      if (bal !== null && nextStake > bal + 0.001) {
+        stop('insufficient-funds');
+        return;
+      }
+      placeTrade(active.signalClass as Exclude<EoDetectionClass, null>);
+    } else {
+      setPhase('idle');
+    }
+  }, [phase, openPositions, placeTrade, pushLog, stop, pipSize]);
+
+  usePhaseWatchdog(enabled, phase, (stuckPhase) => stop(timeoutReason(stuckPhase)));
+
+  return {
+    enabled,
+    running: enabled,
+    phase,
+    pnl,
+    digitRecord,
+    stoppedReason,
+    armedClass,
+    confirmProgress,
+    runProgress,
+    lastFired,
+    burstActive,
+    burstPnl,
+    lastBurstOutcome,
+    log,
+    sessionDurationMs,
+    start,
+    stop,
   };
-
-  const contractLabels: Record<string, string> = {
-    DIGITMATCH: localize('Digit Match'),
-    DIGITDIFF: localize('Digit Differs'),
-    DIGITOVER: localize('Digit Over'),
-    DIGITUNDER: localize('Digit Under'),
-    DIGITEVEN: localize('Digit Even'),
-    DIGITODD: localize('Digit Odd'),
-  };
-  const tradeTypeOptions: { value: TradeType; label: string }[] = [
-    { value: 'matches-differs', label: localize('Matches/Differs') },
-    { value: 'over-under', label: localize('Over/Under') },
-    { value: 'even-odd', label: localize('Even/Odd') },
-  ];
-  const stoppedLabel = getStoppedLabel(bot.stoppedReason, localize);
-
-  return (
-    <>
-      <MinervaVictoryDialog
-        open={victoryOpen}
-        onOpenChange={setVictoryOpen}
-        onContinue={() => setVictoryOpen(false)}
-        durationMs={bot.sessionDurationMs}
-      />
-      <MinervaDefeatDialog
-        open={defeatOpen}
-        onOpenChange={setDefeatOpen}
-        onContinue={() => setDefeatOpen(false)}
-        durationMs={bot.sessionDurationMs}
-      />
-      <MinervaInsufficientFundsDialog
-        open={insufficientOpen}
-        onOpenChange={setInsufficientOpen}
-        onContinue={() => setInsufficientOpen(false)}
-        durationMs={bot.sessionDurationMs}
-      />
-      <MinervaSettingsProfilesDialog
-        open={profilesDialogOpen}
-        onOpenChange={setProfilesDialogOpen}
-        profiles={eoProfiles}
-        activeProfileName={activeProfileName}
-        onSave={handleSaveProfile}
-        onLoad={handleLoadProfile}
-        onDelete={handleDeleteProfile}
-      />
-
-      <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
-        {/* Left: bot settings */}
-        <Card
-          className={`panel-glow bg-card/60 backdrop-blur-md flex flex-col w-full lg:w-[420px] lg:shrink-0 lg:sticky lg:top-[88px] lg:max-h-[calc(100dvh-124px)] self-start overflow-visible ${settingsPanel.className}`}
-          style={settingsPanel.style}
-          onMouseEnter={settingsPanel.onMouseEnter}
-          onMouseLeave={settingsPanel.onMouseLeave}
-          onFocus={settingsPanel.onFocus}
-          onBlur={settingsPanel.onBlur}
-        >
-          <div aria-hidden className={settingsPanel.overlayClassName} />
-          <CardHeader className="pb-3 shrink-0">
-            <CardTitle className="text-xl font-bold tracking-wide">EVEN / ODD</CardTitle>
-            <p className="text-xs font-semibold text-foreground/90">
-              {isConnected ? (
-                balanceLabel ? (
-                  balanceLabel
-                ) : (
-                  <Localize i18n_default_text="Connected" />
-                )
-              ) : (
-                <Localize i18n_default_text="Not connected" />
-              )}
-            </p>
-            <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 mt-1">
-              <span
-                className={cn(
-                  'text-xs font-bold pr-2 min-w-0',
-                  botRunning ? 'text-emerald-400' : 'text-foreground/85'
-                )}
-              >
-                {getStatusLabel(
-                  bot.phase,
-                  bot.armedClass,
-                  bot.confirmProgress,
-                  confirmationStreak,
-                  bot.runProgress,
-                  streakCount,
-                  bot.burstActive,
-                  bot.burstPnl,
-                  localize
-                )}
-              </span>
-              <span
-                className={cn(
-                  'text-sm font-mono font-bold tabular-nums',
-                  bot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                )}
-              >
-                {bot.pnl >= 0 ? '+' : ''}
-                {bot.pnl.toFixed(2)}
-              </span>
-            </div>
-            {!bot.running && stoppedLabel && (
-              <p className="text-[11px] text-muted-foreground px-0.5">{stoppedLabel}</p>
-            )}
-            {bot.running && !bot.burstActive && bot.lastBurstOutcome === 'won' && (
-              <p className="text-[11px] text-muted-foreground px-0.5">
-                <Localize i18n_default_text="Last run finished in profit — watching for the next signal." />
-              </p>
-            )}
-            {bot.running && !bot.burstActive && bot.lastBurstOutcome === 'error' && (
-              <p className="text-[11px] text-muted-foreground px-0.5">
-                <Localize i18n_default_text="Last trade failed — watching for the next signal." />
-              </p>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
-            <fieldset disabled={botRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Market" />
-                </Label>
-                <SymbolSelector
-                  symbols={symbols}
-                  activeSymbol={activeSymbol}
-                  onSymbolChange={selectSymbol}
-                />
-              </div>
-
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Duration" />
-                </Label>
-                <Input
-                  type="number"
-                  value={duration}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val)) setDuration(val);
-                  }}
-                  min={durationLimits.min}
-                  max={durationLimits.max}
-                  labelRight={localize('Ticks')}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className={FIELD}>
-                  <Label className="text-xs font-semibold text-foreground/90">
-                    <Localize i18n_default_text="Stake" />
-                  </Label>
-                  <Input value={initialStake} onChange={(e) => setInitialStake(e.target.value)} />
-                </div>
-                <div className={FIELD}>
-                  <Label className="text-xs font-semibold text-foreground/90">
-                    <Localize i18n_default_text="Stake Multiplier" />
-                  </Label>
-                  <Input value={stakeMultiplier} onChange={(e) => setStakeMultiplier(e.target.value)} />
-                </div>
-              </div>
-
-              <div className={FIELD}>
-                <Label
-                  className="text-xs font-semibold text-foreground/90"
-                  title={localize(
-                    'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
-                  )}
-                >
-                  <Localize i18n_default_text="Start Martingale after N losses" />
-                </Label>
-                <Input
-                  value={martingaleAfterLosses}
-                  onChange={(e) => setMartingaleAfterLosses(e.target.value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className={FIELD}>
-                  <Label
-                    className="text-xs font-semibold text-foreground/90"
-                    title={localize(
-                      'N consecutive digits in the same class (e.g. all odd AND all over 4) required to arm a run. With 4: 7-9-5-7 arms Odd/Over, 3-3-1-3 arms Odd/Under, 2-2-4-0 arms Even/Under.'
-                    )}
-                  >
-                    <Localize i18n_default_text="Streak Count" />
-                  </Label>
-                  <Input
-                    type="number"
-                    min={2}
-                    max={20}
-                    value={streakCount}
-                    onChange={(e) => setStreakCount(e.target.value)}
-                  />
-                </div>
-                <div className={FIELD}>
-                  <Label
-                    className="text-xs font-semibold text-foreground/90"
-                    title={localize(
-                      'M more consecutive digits of the same class, uninterrupted, required after arming before the trade fires. 0 = fire immediately once the run is complete.'
-                    )}
-                  >
-                    <Localize i18n_default_text="Confirmation Streak" />
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={9}
-                    value={confirmationStreak}
-                    onChange={(e) => setConfirmationStreak(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className={FIELD}>
-                <Label
-                  className="text-xs font-semibold text-foreground/90"
-                  title={localize(
-                    'Seconds a run may stay ARMED without reaching the confirmation streak before the arm is abandoned and the bot goes back to watching for a fresh run. 0 = no time limit.'
-                  )}
-                >
-                  <Localize i18n_default_text="ARM Time Limit (seconds)" />
-                </Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={3600}
-                  value={armTimeLimitSeconds}
-                  onChange={(e) => setArmTimeLimitSeconds(e.target.value)}
-                />
-              </div>
-
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Watch: Even / Odd" />
-                </Label>
-                <ToggleGroup
-                  type="single"
-                  value={watchParity}
-                  onValueChange={(v) => {
-                    if (v) setWatchParity(v as EoWatchParity);
-                  }}
-                  className="w-full gap-0 rounded-full bg-muted p-1"
-                >
-                  <ToggleGroupItem value="both" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Both" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="odd" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Odd" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="even" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Even" />
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </div>
-
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Watch: Over / Under" />
-                </Label>
-                <ToggleGroup
-                  type="single"
-                  value={watchRange}
-                  onValueChange={(v) => {
-                    if (v) setWatchRange(v as EoWatchRange);
-                  }}
-                  className="w-full gap-0 rounded-full bg-muted p-1"
-                >
-                  <ToggleGroupItem value="both" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Both" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="over" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Over 4" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="under" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Under 5" />
-                  </ToggleGroupItem>
-                </ToggleGroup>
-                <p className="text-[11px] text-muted-foreground">
-                  <Localize i18n_default_text="A run is N digits in a row that are all the same class: Odd/Over (5 7 9), Even/Over (6 8), Odd/Under (1 3) or Even/Under (0 2 4). Any other digit breaks it." />
-                </p>
-              </div>
-
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Trading Mode" />
-                </Label>
-                <ToggleGroup
-                  type="single"
-                  value={tradingMode}
-                  onValueChange={(v) => {
-                    if (v) setTradingMode(v as EoTradingMode);
-                  }}
-                  className="w-full gap-0 rounded-full bg-muted p-1"
-                >
-                  <ToggleGroupItem value="trend" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Trend" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="neutral" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Neutral" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="counter" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Counter" />
-                  </ToggleGroupItem>
-                </ToggleGroup>
-                <p className="text-[11px] text-muted-foreground">
-                  {tradingMode === 'neutral' && (
-                    <Localize i18n_default_text="Won't trade until you pick Trend or Counter." />
-                  )}
-                  {tradingMode === 'trend' && (
-                    <Localize i18n_default_text="Trades with the run: an Odd run trades Odd, an Even run trades Even." />
-                  )}
-                  {tradingMode === 'counter' && (
-                    <Localize i18n_default_text="Trades against the run: an Odd run trades Even, an Even run trades Odd." />
-                  )}
-                </p>
-              </div>
-
-              <div className={FIELD}>
-                <Label className="text-xs font-semibold text-foreground/90">
-                  <Localize i18n_default_text="Run Mode" />
-                </Label>
-                <ToggleGroup
-                  type="single"
-                  value={runMode}
-                  onValueChange={(v) => {
-                    if (v) setRunMode(v as EoRunMode);
-                  }}
-                  className="w-full gap-0 rounded-full bg-muted p-1"
-                >
-                  <ToggleGroupItem value="burst" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Burst" />
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="continuous" className={TOGGLE_ITEM}>
-                    <Localize i18n_default_text="Continuous" />
-                  </ToggleGroupItem>
-                </ToggleGroup>
-                <p className="text-[11px] text-muted-foreground">
-                  {runMode === 'burst' ? (
-                    <Localize i18n_default_text="A win ends the run — the bot waits for the next signal." />
-                  ) : (
-                    <Localize i18n_default_text="A win keeps going — the bot re-fires immediately, straight to Take Profit/Stop Loss." />
-                  )}
-                </p>
-              </div>
-
-              <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
-                <div className={FIELD}>
-                  <Label
-                    className="text-xs font-semibold text-foreground/90"
-                    title={localize('Once total profit across the whole run reaches this amount, the bot stops. 0 = off.')}
-                  >
-                    <Localize i18n_default_text="Take Profit" />
-                  </Label>
-                  <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} labelRight="USD" />
-                </div>
-                <div className={FIELD}>
-                  <Label
-                    className="text-xs font-semibold text-foreground/90"
-                    title={localize('Once total loss across the whole run reaches this amount, the bot stops. 0 = off.')}
-                  >
-                    <Localize i18n_default_text="Stop Loss" />
-                  </Label>
-                  <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} labelRight="USD" />
-                </div>
-                <div className={cn('col-span-2', FIELD)}>
-                  <Label
-                    className="text-xs font-semibold text-foreground/90"
-                    title={localize(
-                      "Once THIS signal's own profit reaches this amount, the bot stops that signal and waits for the next one — it keeps running and never pops the Take Profit popup. 0 = off."
-                    )}
-                  >
-                    <Localize i18n_default_text="Run TP" />
-                  </Label>
-                  <Input
-                    value={runTakeProfit}
-                    onChange={(e) => setRunTakeProfit(e.target.value)}
-                    labelRight="USD"
-                  />
-                </div>
-              </div>
-
-              {(bot.running || bot.digitRecord.length > 0) && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-semibold text-foreground/90">
-                      <Localize i18n_default_text="Digit Record" />
-                    </Label>
-                    {bot.armedClass && (
-                      <span className="text-[11px] font-semibold text-foreground/80">
-                        {eoClassLabel(bot.armedClass, localize)} {localize('ARMED')} · {bot.confirmProgress}/
-                        {confirmationStreak}
-                      </span>
-                    )}
-                  </div>
-                  <EoDigitRecord
-                    digits={bot.digitRecord}
-                    watchParity={watchParity}
-                    watchRange={watchRange}
-                  />
-                </div>
-              )}
-            </fieldset>
-
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => setProfilesDialogOpen(true)}
-            >
-              <Localize i18n_default_text="Settings profiles" />
-              {activeProfileName ? ` — ${activeProfileName}` : ''}
-            </Button>
-
-            <Button
-              className="w-full"
-              size="lg"
-              variant={botRunning ? 'destructive' : 'default'}
-              onClick={handleStart}
-              disabled={!isConnected || !isAuthenticated}
-            >
-              {botRunning ? <Localize i18n_default_text="Stop" /> : <Localize i18n_default_text="Start" />}
-            </Button>
-            <p className="text-[11px] text-muted-foreground text-center">
-              {isAuthenticated ? (
-                <Localize i18n_default_text="Uses the same trading connection as Manual mode — only one can trade at a time." />
-              ) : (
-                <Localize i18n_default_text="Log in to run the robot." />
-              )}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Right: digits / trades / logs, then manual mode */}
-        <div className="flex-1 min-w-0 flex flex-col gap-4">
-          <Card
-            className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${analysisPanel.className}`}
-            style={analysisPanel.style}
-            onMouseEnter={analysisPanel.onMouseEnter}
-            onMouseLeave={analysisPanel.onMouseLeave}
-            onFocus={analysisPanel.onFocus}
-            onBlur={analysisPanel.onBlur}
-          >
-            <div aria-hidden className={analysisPanel.overlayClassName} />
-            <CardHeader className="pb-0">
-              <div className="flex items-center gap-5 border-b border-border">
-                {(
-                  [
-                    ['digits', localize('Digits')],
-                    ['trades', localize('Trades')],
-                    ['logs', localize('Logs')],
-                  ] as [Tab, string][]
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    onClick={() => setActiveTab(key)}
-                    className={cn(
-                      'relative pb-2.5 text-sm font-bold border-b-2 -mb-px transition-colors',
-                      activeTab === key
-                        ? 'border-primary text-foreground'
-                        : 'border-transparent text-foreground/70 hover:text-foreground'
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-6">
-              {activeTab === 'digits' && (
-                <>
-                  <div className="space-y-2">
-                    <p className="text-center text-sm font-medium">
-                      <Localize i18n_default_text="Digits frequency percentage" />
-                    </p>
-                    <DigitFrequencyRow
-                      digitStats={stats}
-                      selectedDigit={selectedDigit}
-                      onSelect={setSelectedDigit}
-                      lastDigit={lastDigit}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">
-                      <Localize i18n_default_text="Most recent digits" />
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {recentDigits.length === 0 && (
-                        <span className="text-xs font-semibold text-foreground/90">
-                          <Localize i18n_default_text="Waiting for ticks…" />
-                        </span>
-                      )}
-                      {recentDigits.map((d, i) => (
-                        <span
-                          key={i}
-                          className={cn(
-                            'w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]',
-                            i === recentDigits.length - 1
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-muted text-foreground/85'
-                          )}
-                        >
-                          {d}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <DigitHistogram title={localize('Last 25 digits')} stats={last25} />
-                    <DigitHistogram title={localize('Last 50 digits')} stats={last50} />
-                    <DigitHistogram title={localize('Last 100 digits')} stats={last100} />
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">
-                      <Localize i18n_default_text="Recent ticks" />
-                    </p>
-                    <TickSparkline prices={priceHistory} />
-                  </div>
-                </>
-              )}
-
-              {activeTab === 'trades' && (
-                <>
-                  {isAuthenticated ? (
-                    <PositionsTable
-                      openPositions={openPositions.filter((p) => DIGIT_CONTRACT_TYPES.includes(p.contract_type))}
-                      closedPositions={closedPositions.filter((p) => DIGIT_CONTRACT_TYPES.includes(p.contract_type))}
-                      onSell={sellContract}
-                      sellingId={sellingId}
-                      sellError={sellError}
-                      onClearSellError={clearSellError}
-                      contractTypeLabels={contractLabels}
-                      className="mt-0"
-                    />
-                  ) : (
-                    <div className="py-10 text-center text-sm text-muted-foreground">
-                      <Localize i18n_default_text="Log in to see your open and closed positions." />
-                    </div>
-                  )}
-                </>
-              )}
-
-              {activeTab === 'logs' && (
-                <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
-                  {bot.log.length === 0 && (
-                    <div className="py-10 text-center text-sm text-muted-foreground">
-                      <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
-                    </div>
-                  )}
-                  {[...bot.log].reverse().map((entry: EoLogEntry) => (
-                    <div
-                      key={entry.id}
-                      className="flex items-center justify-between text-xs rounded-md border border-border px-3 py-2"
-                    >
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {entry.signalClass && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
-                            {eoClassLabel(entry.signalClass, localize)} {localize('run')}
-                          </span>
-                        )}
-                        {entry.barrier && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/15 text-primary">
-                            {localize('Traded')} {entry.barrier}
-                          </span>
-                        )}
-                        <span className="text-foreground/80 font-medium">
-                          {new Date(entry.time).toLocaleTimeString()}
-                        </span>
-                        {entry.exitSpot !== null && (
-                          <span className="tabular-nums font-mono font-semibold text-foreground">
-                            {entry.exitSpot.toFixed(pipSize)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="tabular-nums text-foreground/70">
-                          {localize('Stake')} {entry.stake.toFixed(2)}
-                        </span>
-                        <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                          {entry.won ? localize('Win') : localize('Loss')}
-                        </span>
-                        <span
-                          className={cn(
-                            'tabular-nums font-bold',
-                            entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                          )}
-                        >
-                          {entry.profit >= 0 ? '+' : ''}
-                          {entry.profit.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card
-            className={`panel-glow bg-card/60 backdrop-blur-md h-fit ${manualPanel.className}`}
-            style={manualPanel.style}
-            onMouseEnter={manualPanel.onMouseEnter}
-            onMouseLeave={manualPanel.onMouseLeave}
-            onFocus={manualPanel.onFocus}
-            onBlur={manualPanel.onBlur}
-          >
-            <div aria-hidden className={manualPanel.overlayClassName} />
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                <Localize i18n_default_text="Manual mode" />
-              </CardTitle>
-              <p className="text-xs font-semibold text-foreground/90">
-                {activeSymbol?.underlying_symbol_name ?? localize('Select a market')}
-              </p>
-            </CardHeader>
-            <CardContent>
-              {botRunning && (
-                <p className="text-xs text-amber-500 bg-amber-500/10 rounded-md px-2.5 py-1.5 mb-3">
-                  <Localize i18n_default_text="Manual trading is paused while the robot is running." />
-                </p>
-              )}
-              <fieldset disabled={botRunning} className="space-y-3 border-0 p-0 m-0 min-w-0 max-w-md">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-foreground/90">
-                    <Localize i18n_default_text="Trade Type" />
-                  </Label>
-                  <Select value={tradeType} onValueChange={(v) => setTradeType(v as TradeType)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tradeTypeOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {tradeType !== 'even-odd' && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-foreground/90">
-                      <Localize i18n_default_text="Prediction" />
-                    </Label>
-                    <Select
-                      value={String(selectedDigit)}
-                      onValueChange={(v) => setSelectedDigit(parseInt(v, 10))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 10 }, (_, d) => (
-                          <SelectItem key={d} value={String(d)}>
-                            {d}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <TradeControls
-                  tradeType={tradeType}
-                  contractMode={contractMode}
-                  onContractModeChange={setContractMode}
-                  selectedDigit={selectedDigit}
-                  isConnected={isConnected}
-                  stake={stake}
-                  onStakeChange={setStake}
-                  duration={duration}
-                  onDurationChange={setDuration}
-                  durationLimits={durationLimits}
-                  proposal={proposal}
-                  isProposalLoading={isProposalLoading}
-                  onBuy={buyContract}
-                  isBuying={isBuying}
-                  buyResult={buyResult}
-                  buyError={buyError}
-                  onClearBuyResult={clearBuyResult}
-                  isAuthenticated={isAuthenticated}
-                />
-              </fieldset>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </>
-  );
 }
