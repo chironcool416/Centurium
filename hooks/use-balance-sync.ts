@@ -65,11 +65,10 @@ export function useBalanceSync(
       const update = parseBalanceUpdate(message);
       if (!update) return;
 
-      onBalanceUpdateRef.current(
-        update.accountId ?? activeAccountId,
-        update.balance,
-        update.currency
-      );
+      // The socket is scoped to the active account, so always apply to it —
+      // a loginid in the payload that differs in format from account_id would
+      // otherwise match nothing and the balance would never move.
+      onBalanceUpdateRef.current(activeAccountId, update.balance, update.currency);
     })
       .then(subscription => {
         if (disposed) {
