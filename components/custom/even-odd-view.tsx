@@ -656,6 +656,9 @@ export function EvenOddView({
     clearBuyResult,
     openPositions,
     balance,
+    currentContractMode: contractMode,
+    currentSelectedDigit: selectedDigit,
+    currentStake: stake,
   });
   const botRunning = bot.running;
 
