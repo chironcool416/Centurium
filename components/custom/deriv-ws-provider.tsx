@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { useDerivWS } from '@deriv/core';
 import { useAuth } from '@/hooks/use-auth';
 import { useBalanceSync } from '@/hooks/use-balance-sync';
@@ -41,6 +41,49 @@ export function DerivWSProvider({ children }: { children: React.ReactNode }) {
     auth.wsUrl ? auth.activeAccountId : null,
     auth.updateAccountBalance
   );
+
+  // Backup balance sources. Every buy/sell response and every transaction
+  // event (which fires when a contract settles) carries the account balance, so
+  // the displayed/practice balance moves on each trade even if the dedicated
+  // balance stream is slow or silent.
+  const { wsUrl, activeAccountId, updateAccountBalance } = auth;
+  useEffect(() => {
+    if (!ws || !isConnected || !wsUrl || !activeAccountId) return;
+
+    const num = (v: unknown): number | null => {
+      const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN;
+      return Number.isFinite(n) ? n : null;
+    };
+    const push = (v: unknown) => {
+      const n = num(v);
+      if (n !== null) updateAccountBalance(activeAccountId, n.toFixed(2));
+    };
+
+    const unlisten = ws.onMessage(msg => {
+      const buy = msg.buy as { balance_after?: unknown } | undefined;
+      const sell = msg.sell as { balance_after?: unknown } | undefined;
+      if (buy) push(buy.balance_after);
+      if (sell) push(sell.balance_after);
+    });
+
+    let disposed = false;
+    let unsubscribe = () => {};
+    ws.subscribe({ transaction: 1 }, msg => {
+      const tx = msg.transaction as { balance?: unknown } | undefined;
+      if (tx) push(tx.balance);
+    })
+      .then(sub => {
+        if (disposed) sub.unsubscribe();
+        else unsubscribe = sub.unsubscribe;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      unlisten();
+      unsubscribe();
+    };
+  }, [ws, isConnected, wsUrl, activeAccountId, updateAccountBalance]);
 
   return (
     <DerivWSContext.Provider value={{ ws, isConnected, isExhausted, auth }}>
