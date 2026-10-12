@@ -142,7 +142,7 @@ function applyPracticeOffset(account: DerivAccount, offset: number | undefined):
   if (offset === undefined || account.account_type !== 'demo') return account;
   const real = Number(account.balance);
   if (!Number.isFinite(real)) return account;
-  const shown = Math.max(0, Math.round((real + offset) * 100) / 100);
+  const shown = Math.round((real + offset) * 100) / 100;
   return { ...account, balance: shown.toFixed(2) };
 }
 
