@@ -107,6 +107,11 @@ interface UseEvenOddBotParams {
   clearBuyResult: () => void;
   openPositions: OpenPosition[];
   balance: number | null;
+  /** What the trade form currently holds — lets the bot tell when a trade will
+   *  NOT change the proposal params (so no loading pulse is coming). */
+  currentContractMode: ContractMode;
+  currentSelectedDigit: number;
+  currentStake: string;
 }
 
 const DIGIT_RECORD_SIZE = 30;
@@ -151,6 +156,9 @@ export function useEvenOddBot({
   clearBuyResult,
   openPositions,
   balance,
+  currentContractMode,
+  currentSelectedDigit,
+  currentStake,
 }: UseEvenOddBotParams) {
   const [enabled, setEnabled] = useState(false);
   const [phase, setPhase] = useState<EoPhase>('idle');
@@ -206,6 +214,16 @@ export function useEvenOddBot({
   const lossStreakRef = useRef(0);
   // ALT trade type: false → next trade is Even/Odd, true → Over 4/Under 5.
   const altNextIsUoRef = useRef(false);
+  const liveParamsRef = useRef({
+    contractMode: currentContractMode,
+    selectedDigit: currentSelectedDigit,
+    stake: currentStake,
+  });
+  liveParamsRef.current = {
+    contractMode: currentContractMode,
+    selectedDigit: currentSelectedDigit,
+    stake: currentStake,
+  };
   const balanceRef = useRef<number | null>(balance);
   useEffect(() => {
     balanceRef.current = balance;
@@ -339,7 +357,17 @@ export function useEvenOddBot({
       }
 
       const fireKey = `${contractMode}:${selectedDigit ?? '-'}:${stake.toFixed(2)}`;
-      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      // If the form already holds exactly these params (e.g. restarting the bot
+      // right after a stop, or the first trade matching what was last on screen),
+      // useProposal never re-subscribes, so no loading pulse will ever come and
+      // the bot would wait the full 30s and stop with "No price received".
+      const live = liveParamsRef.current;
+      const needsBarrier = contractMode !== 'DIGITEVEN' && contractMode !== 'DIGITODD';
+      const paramsAlreadyLive =
+        live.contractMode === contractMode &&
+        Math.abs(parseFloat(live.stake) - Number(stake.toFixed(2))) < 0.005 &&
+        (!needsBarrier || live.selectedDigit === selectedDigit);
+      skipLoadingWaitRef.current = paramsAlreadyLive || fireKey === lastFireKeyRef.current;
       lastFireKeyRef.current = fireKey;
 
       activeTradeRef.current = { side, signalClass, contractMode, selectedDigit, barrier, stake };
