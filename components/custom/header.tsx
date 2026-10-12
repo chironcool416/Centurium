@@ -6,6 +6,8 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { Home, Zap } from 'lucide-react';
 import { Localize } from '@deriv-com/translations';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { LANGUAGE_LOCALES } from '@/lib/i18n';
@@ -60,6 +62,69 @@ function AccountLabel({ type }: { type: 'demo' | 'real' }) {
         <Localize i18n_default_text="Real account" />
       )}
     </span>
+  );
+}
+
+/** Demo-only: type a figure and the app shows that as your balance. */
+function PracticeBalanceForm({ onDone }: { onDone: () => void }) {
+  const { auth } = useDerivWSContext();
+  const { practice } = auth;
+  const [value, setValue] = useState('');
+
+  const submit = () => {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) return;
+    practice.set(Math.round(amount * 100) / 100);
+    setValue('');
+    onDone();
+  };
+
+  return (
+    <div className="mt-2 border-t border-border pt-2 px-1 space-y-2">
+      <p className="text-xs font-medium text-foreground">Practice balance</p>
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="any"
+          placeholder="e.g. 30"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') submit();
+          }}
+          className="h-8 text-sm"
+          fullWidth
+        />
+        <Button size="sm" onClick={submit} disabled={value.trim() === ''}>
+          Set
+        </Button>
+      </div>
+      {practice.active && (
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            Deriv demo:{' '}
+            {practice.realBalance !== null
+              ? practice.realBalance.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })
+              : '—'}
+          </span>
+          <button
+            type="button"
+            className="underline hover:text-foreground"
+            onClick={() => {
+              practice.clear();
+              onDone();
+            }}
+          >
+            Show real balance
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -156,6 +221,8 @@ export function Header({
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
   const isAuthenticated = authState === 'authenticated';
   const isAuthenticating = authState === 'authenticating';
+  const { auth } = useDerivWSContext();
+  const practiceActive = auth.practice.active && activeAccount?.account_type === 'demo';
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-2 sm:px-4 py-3 border-b bg-background/80 backdrop-blur-sm">
@@ -188,7 +255,14 @@ export function Header({
             <PopoverTrigger asChild>
               <button className="flex items-center gap-1 sm:gap-2 rounded-lg border border-border px-2 sm:px-3 hover:bg-muted/50 transition-colors shrink-0">
                 <div className="text-left">
-                  <AccountLabel type={activeAccount.account_type} />
+                  <div className="flex items-center gap-1.5">
+                    <AccountLabel type={activeAccount.account_type} />
+                    {practiceActive && (
+                      <span className="rounded bg-orange-500/15 px-1 text-[10px] font-semibold uppercase text-orange-500">
+                        Practice
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm sm:text-base font-bold text-foreground whitespace-nowrap">
                     {formatBalance(activeAccount.balance, numberLocale)} {activeAccount.currency}
                   </p>
@@ -230,6 +304,9 @@ export function Header({
                   </button>
                 ))}
               </div>
+              {activeAccount.account_type === 'demo' && (
+                <PracticeBalanceForm onDone={() => setAccountSwitcherOpen(false)} />
+              )}
             </PopoverContent>
           </Popover>
         )}
