@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   initiateLogin,
   initiateSignUp,
@@ -108,7 +108,58 @@ async function getAuthConfigWithReferral(lang?: string): Promise<AuthConfig> {
   return config;
 }
 
+// ---------------------------------------------------------------------------
+// Practice balance (demo accounts only)
+//
+// Deriv cannot set a demo balance to an arbitrary figure, so we keep a local
+// per-account OFFSET: shown balance = real Deriv balance + offset. Every trade
+// moves the real balance by exactly its profit/loss, so the shown balance
+// tracks a "$30 account" perfectly while the real demo account stays funded.
+// ---------------------------------------------------------------------------
+const PRACTICE_STORAGE_KEY = 'centurium_practice_offsets';
+type PracticeOffsets = Record<string, number>;
+
+function readPracticeOffsets(): PracticeOffsets {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(PRACTICE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? (parsed as PracticeOffsets) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePracticeOffsets(offsets: PracticeOffsets): void {
+  try {
+    window.localStorage.setItem(PRACTICE_STORAGE_KEY, JSON.stringify(offsets));
+  } catch {
+    // Storage unavailable — the offset still works for this session.
+  }
+}
+
+function applyPracticeOffset(account: DerivAccount, offset: number | undefined): DerivAccount {
+  if (offset === undefined || account.account_type !== 'demo') return account;
+  const real = Number(account.balance);
+  if (!Number.isFinite(real)) return account;
+  const shown = Math.max(0, Math.round((real + offset) * 100) / 100);
+  return { ...account, balance: shown.toFixed(2) };
+}
+
+export interface PracticeControls {
+  /** True when the active demo account is showing a practice balance. */
+  active: boolean;
+  /** The real balance Deriv reports for the active account (null if unknown). */
+  realBalance: number | null;
+  /** Make the active demo account show `amount` from now on. */
+  set: (amount: number) => void;
+  /** Go back to showing the real Deriv balance. */
+  clear: () => void;
+}
+
 export interface UseAuthReturn {
+  /** Demo-only practice balance controls. */
+  practice: PracticeControls;
   authState: AuthState;
   accounts: DerivAccount[];
   activeAccount: DerivAccount | null;
@@ -129,7 +180,7 @@ export function useAuth(): UseAuthReturn {
   const [authState, setAuthState] = useState<AuthState>(() =>
     typeof window !== 'undefined' && getAuthInfo() ? 'authenticated' : 'unauthenticated'
   );
-  const [accounts, setAccounts] = useState<DerivAccount[]>(() => {
+  const [rawAccounts, setAccounts] = useState<DerivAccount[]>(() => {
     if (typeof window === 'undefined') return [];
     return getDerivAccounts() ?? [];
   });
@@ -142,6 +193,7 @@ export function useAuth(): UseAuthReturn {
   const initRef = useRef(false);
   const activeAccountIdRef = useRef<string | null>(null);
   const tabHiddenAtRef = useRef<number | null>(null);
+  const [practiceOffsets, setPracticeOffsets] = useState<PracticeOffsets>(readPracticeOffsets);
 
   // Fetch OTP WebSocket URL for an account
   const fetchOTPUrl = useCallback(
@@ -380,7 +432,7 @@ export function useAuth(): UseAuthReturn {
       if (!authInfo) return;
 
       try {
-        const account = accounts.find(a => a.account_id === accountId);
+        const account = rawAccounts.find(a => a.account_id === accountId);
         if (account) setAccountType(account.account_type);
         // Fetch OTP before updating accountId so reconnectKey and url are consistent
         const otpUrl = await fetchOTPUrl(accountId, authInfo);
@@ -391,7 +443,7 @@ export function useAuth(): UseAuthReturn {
         setError(err instanceof Error ? err.message : 'Account switch failed');
       }
     },
-    [fetchOTPUrl, accounts]
+    [fetchOTPUrl, rawAccounts]
   );
 
   // Keep the account snapshot and its persisted fallback synchronized with
@@ -420,10 +472,57 @@ export function useAuth(): UseAuthReturn {
     []
   );
 
+  // Everything downstream (header, bots' stake checks) reads these, so the
+  // practice balance applies app-wide without touching any other file.
+  const accounts = useMemo(
+    () => rawAccounts.map(acc => applyPracticeOffset(acc, practiceOffsets[acc.account_id])),
+    [rawAccounts, practiceOffsets]
+  );
+
   const activeAccount =
     accounts.find(acc => acc.account_id === activeAccountId) ?? accounts[0] ?? null;
 
+  const rawActive =
+    rawAccounts.find(acc => acc.account_id === activeAccountId) ?? rawAccounts[0] ?? null;
+
+  const setPracticeBalance = useCallback(
+    (amount: number) => {
+      if (!rawActive || rawActive.account_type !== 'demo') return;
+      const real = Number(rawActive.balance);
+      if (!Number.isFinite(real) || !Number.isFinite(amount) || amount < 0) return;
+      const offset = Math.round((amount - real) * 100) / 100;
+      setPracticeOffsets(current => {
+        const next = { ...current, [rawActive.account_id]: offset };
+        writePracticeOffsets(next);
+        return next;
+      });
+    },
+    [rawActive]
+  );
+
+  const clearPracticeBalance = useCallback(() => {
+    if (!rawActive) return;
+    setPracticeOffsets(current => {
+      if (!(rawActive.account_id in current)) return current;
+      const next = { ...current };
+      delete next[rawActive.account_id];
+      writePracticeOffsets(next);
+      return next;
+    });
+  }, [rawActive]);
+
+  const practice: PracticeControls = {
+    active:
+      !!rawActive &&
+      rawActive.account_type === 'demo' &&
+      practiceOffsets[rawActive.account_id] !== undefined,
+    realBalance: rawActive && Number.isFinite(Number(rawActive.balance)) ? Number(rawActive.balance) : null,
+    set: setPracticeBalance,
+    clear: clearPracticeBalance,
+  };
+
   return {
+    practice,
     authState,
     accounts,
     activeAccount,
