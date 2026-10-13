@@ -124,6 +124,8 @@ interface SavedEoSettings {
   armTimeLimitSeconds: string;
   tradingMode: EoTradingMode;
   botTradeType: EoTradeType;
+  pctWindow: string;
+  pctThreshold: string;
   runMode: EoRunMode;
   takeProfit: string;
   stopLoss: string;
@@ -502,6 +504,8 @@ export function EvenOddView({
   const [armTimeLimitSeconds, setArmTimeLimitSeconds] = useState('0');
   const [tradingMode, setTradingMode] = useState<EoTradingMode>('neutral');
   const [botTradeType, setBotTradeType] = useState<EoTradeType>('eo');
+  const [pctWindow, setPctWindow] = useState('500');
+  const [pctThreshold, setPctThreshold] = useState('55');
   const [runMode, setRunMode] = useState<EoRunMode>('burst');
   const [takeProfit, setTakeProfit] = useState('0');
   const [stopLoss, setStopLoss] = useState('0');
@@ -523,6 +527,8 @@ export function EvenOddView({
     if (typeof saved.armTimeLimitSeconds === 'string') setArmTimeLimitSeconds(saved.armTimeLimitSeconds);
     if (typeof saved.tradingMode === 'string') setTradingMode(saved.tradingMode);
     if (typeof saved.botTradeType === 'string') setBotTradeType(saved.botTradeType);
+    if (typeof saved.pctWindow === 'string') setPctWindow(saved.pctWindow);
+    if (typeof saved.pctThreshold === 'string') setPctThreshold(saved.pctThreshold);
     if (typeof saved.runMode === 'string') setRunMode(saved.runMode);
     if (typeof saved.takeProfit === 'string') setTakeProfit(saved.takeProfit);
     if (typeof saved.stopLoss === 'string') setStopLoss(saved.stopLoss);
@@ -541,6 +547,8 @@ export function EvenOddView({
     armTimeLimitSeconds,
     tradingMode,
     botTradeType,
+    pctWindow,
+    pctThreshold,
     runMode,
     takeProfit,
     stopLoss,
@@ -659,6 +667,7 @@ export function EvenOddView({
     currentContractMode: contractMode,
     currentSelectedDigit: selectedDigit,
     currentStake: stake,
+    prices,
   });
   const botRunning = bot.running;
 
@@ -712,6 +721,18 @@ export function EvenOddView({
       toast.error(localize('Enter a valid stake first.'));
       return;
     }
+    const pctWindowN = parseInt(pctWindow, 10);
+    const pctThresholdN = parseFloat(pctThreshold);
+    if (botTradeType === 'pct') {
+      if (!pctWindowN || pctWindowN < 10 || pctWindowN > 1000) {
+        toast.error(localize('Enter a valid Last N digits (10-1000) first.'));
+        return;
+      }
+      if (!pctThresholdN || pctThresholdN < 1 || pctThresholdN > 100) {
+        toast.error(localize('Enter a valid Digit % threshold (1-100) first.'));
+        return;
+      }
+    }
     bot.start({
       streakCount: streak,
       confirmationStreak: confirm,
@@ -723,6 +744,8 @@ export function EvenOddView({
       armTimeLimitSeconds: Math.max(0, parseInt(armTimeLimitSeconds, 10) || 0),
       tradingMode,
       tradeType: botTradeType,
+      pctWindow: pctWindowN || 500,
+      pctThreshold: pctThresholdN || 55,
       runMode,
       takeProfit: parseFloat(takeProfit) || 0,
       stopLoss: parseFloat(stopLoss) || 0,
@@ -1070,6 +1093,9 @@ export function EvenOddView({
                   <ToggleGroupItem value="alt" className={TOGGLE_ITEM}>
                     <Localize i18n_default_text="ALT" />
                   </ToggleGroupItem>
+                  <ToggleGroupItem value="pct" className={TOGGLE_ITEM}>
+                    <Localize i18n_default_text="Digit %" />
+                  </ToggleGroupItem>
                 </ToggleGroup>
                 <p className="text-[11px] text-muted-foreground">
                   {botTradeType === 'eo' && (
@@ -1081,7 +1107,53 @@ export function EvenOddView({
                   {botTradeType === 'alt' && (
                     <Localize i18n_default_text="Alternates every trade: Even/Odd, then Over 4/Under 5, then Even/Odd…" />
                   )}
+                  {botTradeType === 'pct' && (
+                    <Localize i18n_default_text="Checks the signal's parity and range over the last N digits; a side is taken only if its share is equal or over the threshold. Both under, or tied, forfeits the signal." />
+                  )}
                 </p>
+                {botTradeType === 'pct' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className={FIELD}>
+                        <Label className="text-xs font-semibold text-foreground/90">
+                          <Localize i18n_default_text="Last N digits" />
+                        </Label>
+                        <Input
+                          type="number"
+                          min={10}
+                          max={1000}
+                          value={pctWindow}
+                          onChange={(e) => setPctWindow(e.target.value)}
+                        />
+                      </div>
+                      <div className={FIELD}>
+                        <Label className="text-xs font-semibold text-foreground/90">
+                          <Localize i18n_default_text="Take if ≥ (%)" />
+                        </Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={100}
+                          step="0.5"
+                          value={pctThreshold}
+                          onChange={(e) => setPctThreshold(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    {bot.lastPctCheck && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {eoClassLabel(bot.lastPctCheck.signalClass, localize)}:{' '}
+                        {bot.lastPctCheck.candidates
+                          .map((c) => `${c.label} ${c.pct.toFixed(1)}%`)
+                          .join(' · ')}{' '}
+                        {'→'}{' '}
+                        {bot.lastPctCheck.taken
+                          ? `${localize('traded')} ${bot.lastPctCheck.taken}`
+                          : localize('forfeited')}
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
 
               <div className={FIELD}>
