@@ -40,13 +40,20 @@ import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use
  *           (2 2 4 0 = even-under → Over 4; 7 9 5 7 = odd-over → Under 5).
  *   'alt' — alternates 'eo' then 'uo' then 'eo'… on every trade placed
  *           (Trend/Counter applied to each), starting with 'eo'.
+ *   'pct' — Digit %. Looks at the last `pctWindow` digits and measures how
+ *           often each of the signal's two sides occurred (the class's
+ *           parity and its range; the opposite pair in Counter mode). A side
+ *           only qualifies if its share is >= `pctThreshold`%. One qualifies
+ *           → that side trades (Even/Odd or Over 4/Under 5 as appropriate).
+ *           Both qualify → the higher share trades; a tie forfeits. Neither
+ *           qualifies → the signal is forfeited (no trade, arm state wiped).
  * Neutral never trades.
  *
  * Burst / Continuous / martingale / TP / SL behave exactly as in Ra.
  */
 
 export type EoSide = 'even' | 'odd' | 'over' | 'under' | null;
-export type EoTradeType = 'eo' | 'uo' | 'alt';
+export type EoTradeType = 'eo' | 'uo' | 'alt' | 'pct';
 export type EoClass = 'odd-over' | 'even-over' | 'odd-under' | 'even-under';
 export type EoDetectionClass = EoClass | null;
 export type EoTradingMode = 'trend' | 'neutral' | 'counter';
@@ -56,6 +63,16 @@ export type EoWatchRange = 'both' | 'over' | 'under';
 export type EoStopReason = 'manual' | 'take-profit' | 'stop-loss' | 'insufficient-funds' | TimeoutReason | null;
 export type EoPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
 export type EoBurstOutcome = 'won' | 'error' | null;
+export interface EoPctCheck {
+  time: number;
+  signalClass: Exclude<EoDetectionClass, null>;
+  window: number;
+  threshold: number;
+  /** The two candidate sides with their share (%) of the window. */
+  candidates: { side: Exclude<EoSide, null>; label: string; pct: number }[];
+  /** Label of the side taken, or null when the signal was forfeited. */
+  taken: string | null;
+}
 export type EoBarrier = 'Even' | 'Odd' | 'Over 4' | 'Under 5';
 
 export interface EoLogEntry {
@@ -87,6 +104,10 @@ export interface EoBotConfig {
   tradingMode: EoTradingMode;
   /** What to trade: Even/Odd, Over 4/Under 5, or alternate. Defaults to 'eo'. */
   tradeType?: EoTradeType;
+  /** Digit % mode: how many of the most recent digits to measure. */
+  pctWindow?: number;
+  /** Digit % mode: minimum share (%) a side needs, equal or over, to be taken. */
+  pctThreshold?: number;
   takeProfit: number;
   stopLoss: number;
   runTakeProfit?: number;
@@ -112,6 +133,8 @@ interface UseEvenOddBotParams {
   currentContractMode: ContractMode;
   currentSelectedDigit: number;
   currentStake: string;
+  /** Rolling price history (oldest → newest) — used by Digit % mode. */
+  prices?: number[];
 }
 
 const DIGIT_RECORD_SIZE = 30;
@@ -159,6 +182,7 @@ export function useEvenOddBot({
   currentContractMode,
   currentSelectedDigit,
   currentStake,
+  prices,
 }: UseEvenOddBotParams) {
   const [enabled, setEnabled] = useState(false);
   const [phase, setPhase] = useState<EoPhase>('idle');
@@ -172,6 +196,9 @@ export function useEvenOddBot({
     cls: null,
     count: 0,
   });
+  const [lastPctCheck, setLastPctCheck] = useState<EoPctCheck | null>(null);
+  const pricesRef = useRef<number[]>([]);
+  pricesRef.current = prices ?? [];
   const [lastFired, setLastFired] = useState<{ side: EoSide; barrier: EoBarrier } | null>(null);
   const [burstActive, setBurstActive] = useState(false);
   const [burstPnl, setBurstPnl] = useState(0);
@@ -297,6 +324,7 @@ export function useEvenOddBot({
       setDigitRecord([]);
       setStoppedReason(null);
       setLastFired(null);
+      setLastPctCheck(null);
       setPhase('idle');
       sessionStartRef.current = Date.now();
       setSessionDurationMs(null);
@@ -321,8 +349,73 @@ export function useEvenOddBot({
     [clearArmTimer]
   );
 
+  /**
+   * Digit % decision for a completed signal. Measures the signal's two
+   * candidate sides over the last `pctWindow` digits and returns the side to
+   * trade, or null when the signal must be forfeited (neither side reaches
+   * the threshold, or the two qualifying sides are exactly tied).
+   */
+  const decidePct = useCallback(
+    (
+      signalClass: Exclude<EoDetectionClass, null>
+    ): { useUo: boolean; side: Exclude<EoSide, null> } | null => {
+      const cfg = cfgRef.current;
+      const counter = cfg.tradingMode === 'counter';
+      const windowN = Math.max(1, cfg.pctWindow ?? 500);
+      const threshold = cfg.pctThreshold ?? 55;
+
+      const quotes = pricesRef.current;
+      const digits = quotes.slice(-windowN).map((q) => getLastDigit(q, pipSize));
+      const total = digits.length;
+
+      const parityNat = eoParityOfClass(signalClass);
+      const rangeNat = eoRangeOfClass(signalClass);
+      const parity: 'odd' | 'even' = counter ? (parityNat === 'odd' ? 'even' : 'odd') : parityNat;
+      const range: 'over' | 'under' = counter ? (rangeNat === 'over' ? 'under' : 'over') : rangeNat;
+
+      const count = (pred: (d: number) => boolean) => digits.filter(pred).length;
+      const parityCount = count((d) => (parity === 'odd' ? d % 2 === 1 : d % 2 === 0));
+      const rangeCount = count((d) => (range === 'over' ? d > 4 : d <= 4));
+
+      const pctOf = (c: number) => (total > 0 ? (c / total) * 100 : 0);
+      const parityLabel = parity === 'odd' ? 'Odd' : 'Even';
+      const rangeLabel = range === 'over' ? 'Over 4' : 'Under 5';
+      // Compare counts (same denominator) so a tie is exact, not float noise.
+      const parityOk = total > 0 && parityCount * 100 >= threshold * total;
+      const rangeOk = total > 0 && rangeCount * 100 >= threshold * total;
+
+      let pick: { useUo: boolean; side: Exclude<EoSide, null> } | null = null;
+      if (parityOk && rangeOk) {
+        if (parityCount > rangeCount) pick = { useUo: false, side: parity };
+        else if (rangeCount > parityCount) pick = { useUo: true, side: range };
+        // exact tie → forfeited
+      } else if (parityOk) {
+        pick = { useUo: false, side: parity };
+      } else if (rangeOk) {
+        pick = { useUo: true, side: range };
+      }
+
+      setLastPctCheck({
+        time: Date.now(),
+        signalClass,
+        window: total,
+        threshold,
+        candidates: [
+          { side: parity, label: parityLabel, pct: pctOf(parityCount) },
+          { side: range, label: rangeLabel, pct: pctOf(rangeCount) },
+        ],
+        taken: pick ? (pick.useUo ? rangeLabel : parityLabel) : null,
+      });
+      return pick;
+    },
+    [pipSize]
+  );
+
   const placeTrade = useCallback(
-    (signalClass: Exclude<EoDetectionClass, null>) => {
+    (
+      signalClass: Exclude<EoDetectionClass, null>,
+      pctPick?: { useUo: boolean; side: Exclude<EoSide, null> }
+    ) => {
       const cfg = cfgRef.current;
       const stake = eoStakeFor(cfg, lossStreakRef.current);
       setStake(stake.toFixed(2));
@@ -330,7 +423,9 @@ export function useEvenOddBot({
       // Which contract family this trade uses. ALT flips on every trade placed.
       const configured = cfg.tradeType ?? 'eo';
       let useUo: boolean;
-      if (configured === 'alt') {
+      if (pctPick) {
+        useUo = pctPick.useUo;
+      } else if (configured === 'alt') {
         useUo = altNextIsUoRef.current;
         altNextIsUoRef.current = !altNextIsUoRef.current;
       } else {
@@ -345,13 +440,17 @@ export function useEvenOddBot({
 
       if (useUo) {
         const natural = eoRangeOfClass(signalClass);
-        side = counter ? (natural === 'over' ? 'under' : 'over') : natural;
+        side = pctPick
+          ? (pctPick.side as 'over' | 'under')
+          : counter ? (natural === 'over' ? 'under' : 'over') : natural;
         contractMode = side === 'over' ? 'DIGITOVER' : 'DIGITUNDER';
         selectedDigit = side === 'over' ? 4 : 5;
         barrier = side === 'over' ? 'Over 4' : 'Under 5';
       } else {
         const natural = eoParityOfClass(signalClass);
-        side = counter ? (natural === 'odd' ? 'even' : 'odd') : natural;
+        side = pctPick
+          ? (pctPick.side as 'odd' | 'even')
+          : counter ? (natural === 'odd' ? 'even' : 'odd') : natural;
         contractMode = side === 'odd' ? 'DIGITODD' : 'DIGITEVEN';
         barrier = side === 'odd' ? 'Odd' : 'Even';
       }
@@ -439,11 +538,16 @@ export function useEvenOddBot({
       const confirmedClass = armedClassRef.current;
 
       if (cfg.tradingMode !== 'neutral' && phase === 'idle') {
-        burstPnlRef.current = 0;
-        setBurstPnl(0);
-        setBurstActive(true);
-        setLastBurstOutcome(null);
-        placeTrade(confirmedClass);
+        // Digit % mode: the signal only trades if a side clears the threshold.
+        // A forfeited signal still consumes the run (fresh run needed).
+        const pctPick = cfg.tradeType === 'pct' ? decidePct(confirmedClass) : undefined;
+        if (cfg.tradeType !== 'pct' || pctPick) {
+          burstPnlRef.current = 0;
+          setBurstPnl(0);
+          setBurstActive(true);
+          setLastBurstOutcome(null);
+          placeTrade(confirmedClass, pctPick ?? undefined);
+        }
 
         // Wipe the whole arm state — the next signal needs a fresh run.
         clearArmTimer();
@@ -456,7 +560,7 @@ export function useEvenOddBot({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTick, enabled, pipSize, placeTrade]);
+  }, [currentTick, enabled, pipSize, placeTrade, decidePct]);
 
   // --- Proposal ready → buy.
   useEffect(() => {
@@ -603,6 +707,7 @@ export function useEvenOddBot({
     confirmProgress,
     runProgress,
     lastFired,
+    lastPctCheck,
     burstActive,
     burstPnl,
     lastBurstOutcome,
