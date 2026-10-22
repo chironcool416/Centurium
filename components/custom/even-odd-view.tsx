@@ -30,6 +30,7 @@ import {
   type EoTradingMode,
   type EoTradeType,
   type EoRunMode,
+  type EoPctAction,
   type EoWatchParity,
   type EoWatchRange,
   type EoDetectionClass,
@@ -126,6 +127,7 @@ interface SavedEoSettings {
   botTradeType: EoTradeType;
   pctWindow: string;
   pctThreshold: string;
+  pctAction?: EoPctAction;
   runMode: EoRunMode;
   takeProfit: string;
   stopLoss: string;
@@ -506,6 +508,7 @@ export function EvenOddView({
   const [botTradeType, setBotTradeType] = useState<EoTradeType>('eo');
   const [pctWindow, setPctWindow] = useState('500');
   const [pctThreshold, setPctThreshold] = useState('55');
+  const [pctAction, setPctAction] = useState<EoPctAction>('take');
   const [runMode, setRunMode] = useState<EoRunMode>('burst');
   const [takeProfit, setTakeProfit] = useState('0');
   const [stopLoss, setStopLoss] = useState('0');
@@ -529,6 +532,7 @@ export function EvenOddView({
     if (typeof saved.botTradeType === 'string') setBotTradeType(saved.botTradeType);
     if (typeof saved.pctWindow === 'string') setPctWindow(saved.pctWindow);
     if (typeof saved.pctThreshold === 'string') setPctThreshold(saved.pctThreshold);
+    setPctAction(saved.pctAction === 'fade' ? 'fade' : 'take');
     if (typeof saved.runMode === 'string') setRunMode(saved.runMode);
     if (typeof saved.takeProfit === 'string') setTakeProfit(saved.takeProfit);
     if (typeof saved.stopLoss === 'string') setStopLoss(saved.stopLoss);
@@ -549,6 +553,7 @@ export function EvenOddView({
     botTradeType,
     pctWindow,
     pctThreshold,
+    pctAction,
     runMode,
     takeProfit,
     stopLoss,
@@ -746,6 +751,7 @@ export function EvenOddView({
       tradeType: botTradeType,
       pctWindow: pctWindowN || 500,
       pctThreshold: pctThresholdN || 55,
+      pctAction,
       runMode,
       takeProfit: parseFloat(takeProfit) || 0,
       stopLoss: parseFloat(stopLoss) || 0,
@@ -1140,6 +1146,33 @@ export function EvenOddView({
                         />
                       </div>
                     </div>
+                    <div className={FIELD}>
+                      <Label className="text-xs font-semibold text-foreground/90">
+                        <Localize i18n_default_text="When a side qualifies" />
+                      </Label>
+                      <ToggleGroup
+                        type="single"
+                        value={pctAction}
+                        onValueChange={(v) => {
+                          if (v) setPctAction(v as EoPctAction);
+                        }}
+                        className="w-full gap-0 rounded-full bg-muted p-1"
+                      >
+                        <ToggleGroupItem value="take" className={TOGGLE_ITEM}>
+                          <Localize i18n_default_text="Take" />
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="fade" className={TOGGLE_ITEM}>
+                          <Localize i18n_default_text="Fade" />
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      <p className="text-[11px] text-muted-foreground">
+                        {pctAction === 'take' ? (
+                          <Localize i18n_default_text="Trades the side that reaches the threshold." />
+                        ) : (
+                          <Localize i18n_default_text="Trades the opposite of the side that reaches the threshold (e.g. Odd ≥ threshold trades Even)." />
+                        )}
+                      </p>
+                    </div>
                     {bot.lastPctCheck && (
                       <p className="text-[11px] text-muted-foreground">
                         {eoClassLabel(bot.lastPctCheck.signalClass, localize)}:{' '}
@@ -1148,7 +1181,9 @@ export function EvenOddView({
                           .join(' · ')}{' '}
                         {'→'}{' '}
                         {bot.lastPctCheck.taken
-                          ? `${localize('traded')} ${bot.lastPctCheck.taken}`
+                          ? bot.lastPctCheck.faded
+                            ? `${bot.lastPctCheck.qualified} ${localize('qualified, faded →')} ${localize('traded')} ${bot.lastPctCheck.taken}`
+                            : `${localize('traded')} ${bot.lastPctCheck.taken}`
                           : localize('forfeited')}
                       </p>
                     )}
