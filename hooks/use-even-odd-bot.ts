@@ -47,6 +47,10 @@ import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use
  *           → that side trades (Even/Odd or Over 4/Under 5 as appropriate).
  *           Both qualify → the higher share trades; a tie forfeits. Neither
  *           qualifies → the signal is forfeited (no trade, arm state wiped).
+ *           `pctAction` ('take' default | 'fade') decides what happens once a
+ *           side has been picked: 'take' trades it, 'fade' trades the
+ *           opposite (Odd ≥ threshold → Even, Over 4 → Under 5, and so on).
+ *           Qualifying, tie and forfeit rules are identical in both.
  * Neutral never trades.
  *
  * Burst / Continuous / martingale / TP / SL behave exactly as in Ra.
@@ -54,6 +58,7 @@ import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use
 
 export type EoSide = 'even' | 'odd' | 'over' | 'under' | null;
 export type EoTradeType = 'eo' | 'uo' | 'alt' | 'pct';
+export type EoPctAction = 'take' | 'fade';
 export type EoClass = 'odd-over' | 'even-over' | 'odd-under' | 'even-under';
 export type EoDetectionClass = EoClass | null;
 export type EoTradingMode = 'trend' | 'neutral' | 'counter';
@@ -70,8 +75,12 @@ export interface EoPctCheck {
   threshold: number;
   /** The two candidate sides with their share (%) of the window. */
   candidates: { side: Exclude<EoSide, null>; label: string; pct: number }[];
-  /** Label of the side taken, or null when the signal was forfeited. */
+  /** Label of the side actually traded, or null when the signal was forfeited. */
   taken: string | null;
+  /** Fade only: label of the side that qualified before being flipped. */
+  qualified?: string | null;
+  /** True when the Fade action flipped the qualifying side. */
+  faded?: boolean;
 }
 export type EoBarrier = 'Even' | 'Odd' | 'Over 4' | 'Under 5';
 
@@ -108,6 +117,8 @@ export interface EoBotConfig {
   pctWindow?: number;
   /** Digit % mode: minimum share (%) a side needs, equal or over, to be taken. */
   pctThreshold?: number;
+  /** Digit % mode: 'take' trades the qualifying side (default), 'fade' trades its opposite. */
+  pctAction?: EoPctAction;
   takeProfit: number;
   stopLoss: number;
   runTakeProfit?: number;
@@ -395,6 +406,23 @@ export function useEvenOddBot({
         pick = { useUo: true, side: range };
       }
 
+      // Fade: flip whichever side qualified into its opposite. Everything above
+      // (window, threshold, both-qualify winner, tie/forfeit) is unchanged.
+      const fade = cfg.pctAction === 'fade';
+      const qualifiedLabel = pick ? (pick.useUo ? rangeLabel : parityLabel) : null;
+      if (pick && fade) {
+        if (pick.useUo) {
+          pick = { useUo: true, side: pick.side === 'over' ? 'under' : 'over' };
+        } else {
+          pick = { useUo: false, side: pick.side === 'odd' ? 'even' : 'odd' };
+        }
+      }
+      const takenLabel = pick
+        ? pick.useUo
+          ? pick.side === 'over' ? 'Over 4' : 'Under 5'
+          : pick.side === 'odd' ? 'Odd' : 'Even'
+        : null;
+
       setLastPctCheck({
         time: Date.now(),
         signalClass,
@@ -404,7 +432,9 @@ export function useEvenOddBot({
           { side: parity, label: parityLabel, pct: pctOf(parityCount) },
           { side: range, label: rangeLabel, pct: pctOf(rangeCount) },
         ],
-        taken: pick ? (pick.useUo ? rangeLabel : parityLabel) : null,
+        taken: takenLabel,
+        qualified: qualifiedLabel,
+        faded: fade && pick !== null,
       });
       return pick;
     },
