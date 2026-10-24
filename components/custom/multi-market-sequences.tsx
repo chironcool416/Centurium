@@ -221,7 +221,9 @@ export function MultiMarketSequences({ panel, streams, botWatch, lastSignal }: P
                   ? `${localize('traded')} ${lastSignal.tradeLabel}`
                   : lastSignal.action === 'busy'
                     ? localize('skipped (trade in progress)')
-                    : localize('skipped (market cooldown)')}{' '}
+                    : lastSignal.action === 'locked'
+                      ? localize('skipped (recovering on another market)')
+                      : localize('skipped (market cooldown)')}{' '}
                 · {Math.max(0, Math.round((Date.now() - lastSignal.time) / 1000))}s {localize('ago')}
               </span>
             )}
