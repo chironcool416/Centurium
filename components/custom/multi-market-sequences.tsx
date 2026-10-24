@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { Localize } from '@deriv-com/translations';
 import {
@@ -24,18 +24,17 @@ import {
   countInBin,
   expectedInBin,
   hitProbability,
-  parseConditionKey,
   type SequenceAnalysis,
 } from '@/lib/digit-sequences';
 import {
   DEFAULT_SEQUENCE_SYMBOLS,
   WINDOW_TICKS,
-  useSequenceScanner,
+  type SequenceStream,
   type SequenceStreamStatus,
 } from '@/hooks/use-sequence-scanner';
-import type { ActiveSymbol, DerivWS } from '@deriv/core';
-
-const STORAGE_KEY = 'centurium:multi-market-sequences';
+import type { SequencePanelSettings } from '@/hooks/use-sequence-panel-settings';
+import type { MmSignal } from '@/hooks/use-mm-bot';
+import type { SequenceCondition } from '@/lib/digit-sequences';
 
 /** Stable per-market colours (same order as DEFAULT_SEQUENCE_SYMBOLS). */
 const MARKET_COLORS = [
@@ -95,79 +94,28 @@ interface Row {
 }
 
 interface Props {
-  ws: DerivWS | null;
-  isConnected: boolean;
-  symbols: ActiveSymbol[];
-  /** True while the Multi-market sub-tab is showing; streams are only open then. */
-  active: boolean;
+  /** Shared selections (condition, min, markets), owned by the robot view. */
+  panel: SequencePanelSettings;
+  /** Live digit buffers per market, from the shared scanner. */
+  streams: Record<string, SequenceStream>;
+  /** Set while the MM bot is running: the panel then mirrors what it watches. */
+  botWatch: { condition: SequenceCondition; length: number } | null;
+  /** Most recent MM bot signal, for the banner and row highlight. */
+  lastSignal: MmSignal | null;
 }
 
-export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props) {
+export function MultiMarketSequences({ panel, streams, botWatch, lastSignal }: Props) {
   const { localize } = useAppTranslations();
-  const [conditionValue, setConditionValue] = useState(conditionKey({ side: 'over', barrier: 5 }));
-  const [minLen, setMinLen] = useState(4);
-  const [hidden, setHidden] = useState<string[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const { available, activeCodes, hidden, setHidden } = panel;
 
-  // Restore saved selections once on mount.
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as {
-          condition?: string;
-          min?: number;
-          hidden?: string[];
-        };
-        if (
-          typeof saved.condition === 'string' &&
-          SEQUENCE_CONDITIONS.some((c) => conditionKey(c) === saved.condition)
-        ) {
-          setConditionValue(saved.condition);
-        }
-        if (typeof saved.min === 'number' && (MIN_RUN_OPTIONS as readonly number[]).includes(saved.min)) {
-          setMinLen(saved.min);
-        }
-        if (Array.isArray(saved.hidden)) setHidden(saved.hidden.filter((h) => typeof h === 'string'));
-      }
-    } catch {
-      // Non-fatal — falls back to defaults.
-    }
-    setLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ condition: conditionValue, min: minLen, hidden })
-      );
-    } catch {
-      // Non-fatal.
-    }
-  }, [loaded, conditionValue, minLen, hidden]);
-
-  const condition = useMemo(() => parseConditionKey(conditionValue), [conditionValue]);
-
-  // Markets that exist on this account, in the app's default order.
-  const available = useMemo(() => {
-    const present = new Set(symbols.map((s) => s.underlying_symbol));
-    return (DEFAULT_SEQUENCE_SYMBOLS as readonly string[]).filter((code) => present.has(code));
-  }, [symbols]);
-
-  const activeCodes = useMemo(
-    () => available.filter((code) => !hidden.includes(code)),
-    [available, hidden]
-  );
-
-  const { streams } = useSequenceScanner({
-    ws,
-    isConnected,
-    symbols,
-    symbolCodes: activeCodes,
-    enabled: active,
-  });
+  // While the bot runs, the chart shows exactly what it is counting: its
+  // condition, and a Min low enough that its watched length is always a bar.
+  const condition = botWatch ? botWatch.condition : panel.condition;
+  const conditionValue = conditionKey(condition);
+  const minLen = botWatch ? Math.min(panel.minLen, botWatch.length) : panel.minLen;
+  const setConditionValue = panel.setConditionValue;
+  const setMinLen = panel.setMinLen;
+  const locked = botWatch !== null;
 
   const rows: Row[] = useMemo(
     () =>
@@ -221,6 +169,7 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
     setHidden((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
 
   const label = conditionLabel(condition);
+  const recentSignal = lastSignal !== null && Date.now() - lastSignal.time < 15_000;
 
   return (
     <div className="space-y-4">
@@ -231,7 +180,7 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
             <Localize i18n_default_text="Sequence lengths" />
           </h3>
           <div className="flex items-center gap-2">
-            <Select value={conditionValue} onValueChange={setConditionValue}>
+            <Select value={conditionValue} onValueChange={setConditionValue} disabled={locked}>
               <SelectTrigger className="h-8 w-[104px] text-xs font-semibold" aria-label="Condition">
                 <SelectValue />
               </SelectTrigger>
@@ -243,7 +192,7 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
                 ))}
               </SelectContent>
             </Select>
-            <Select value={String(minLen)} onValueChange={(v) => setMinLen(Number(v))}>
+            <Select value={String(minLen)} onValueChange={(v) => setMinLen(Number(v))} disabled={locked}>
               <SelectTrigger className="h-8 w-[92px] text-xs font-semibold" aria-label="Minimum run length">
                 <SelectValue />
               </SelectTrigger>
@@ -257,6 +206,27 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
             </Select>
           </div>
         </div>
+
+        {botWatch && (
+          <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs leading-snug">
+            <span className="font-bold text-primary">MM</span>{' '}
+            <Localize i18n_default_text="bot is watching" />{' '}
+            <span className="font-semibold">{label}</span> ·{' '}
+            {localize('runs of exactly {{n}} on {{m}} markets', { n: botWatch.length, m: rows.length })}
+            {lastSignal && (
+              <span className="mt-1 block text-foreground/80">
+                {localize('Last signal')}: {getSymbolDisplayName(lastSignal.symbol)} ·{' '}
+                {localize('run of {{n}} ended', { n: lastSignal.runLength })} →{' '}
+                {lastSignal.action === 'traded'
+                  ? `${localize('traded')} ${lastSignal.tradeLabel}`
+                  : lastSignal.action === 'busy'
+                    ? localize('skipped (trade in progress)')
+                    : localize('skipped (market cooldown)')}{' '}
+                · {Math.max(0, Math.round((Date.now() - lastSignal.time) / 1000))}s {localize('ago')}
+              </span>
+            )}
+          </div>
+        )}
 
         {rows.length === 0 ? (
           <p className="py-10 text-center text-xs text-muted-foreground">
@@ -314,6 +284,22 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
                   const startX = x0 + (groupW - barW * rows.length) / 2;
                   return (
                     <g key={bin.label}>
+                      {botWatch && bin.from === botWatch.length && (
+                        <rect
+                          x={x0 + 2}
+                          y={padT}
+                          width={groupW - 4}
+                          height={plotH}
+                          rx={4}
+                          fill="#3b82f6"
+                          fillOpacity={0.1}
+                          stroke="#3b82f6"
+                          strokeOpacity={0.45}
+                          strokeDasharray="3 3"
+                        >
+                          <title>{`MM bot trades when a run of exactly ${botWatch.length} ends`}</title>
+                        </rect>
+                      )}
                       {rows.map((row, ri) => {
                         const count = counts[ri][bi];
                         const h = (count / top) * plotH;
@@ -490,13 +476,22 @@ export function MultiMarketSequences({ ws, isConnected, symbols, active }: Props
                   return (
                     <tr
                       key={row.code}
-                      className={cn('border-b border-border/50 last:border-0', hot && 'bg-primary/10')}
+                      className={cn(
+                        'border-b border-border/50 last:border-0',
+                        hot && 'bg-primary/10',
+                        recentSignal && lastSignal?.symbol === row.code && 'ring-1 ring-inset ring-amber-400/70'
+                      )}
                     >
                       <td className="py-1.5 pr-2">
                         <span className="flex items-center gap-1.5 font-semibold">
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
                           {row.name}
                           <StatusDot status={row.status} />
+                          {recentSignal && lastSignal?.symbol === row.code && (
+                            <span className="rounded bg-amber-400/20 px-1 text-[10px] font-bold uppercase text-amber-300">
+                              {localize('signal')}
+                            </span>
+                          )}
                         </span>
                       </td>
                       <td className={cn('px-2 py-1.5 text-right tabular-nums', hot && 'font-bold text-primary')}>
