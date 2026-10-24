@@ -37,6 +37,23 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
 import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
 import { MultiMarketSequences } from '@/components/custom/multi-market-sequences';
+import {
+  useMmBot,
+  type MmPhase,
+  type MmMode,
+  type MmCounterKind,
+  type MmStopReason,
+  type MmLogEntry,
+} from '@/hooks/use-mm-bot';
+import { useSequenceScanner } from '@/hooks/use-sequence-scanner';
+import { useSequencePanelSettings } from '@/hooks/use-sequence-panel-settings';
+import {
+  SEQUENCE_CONDITIONS,
+  conditionKey,
+  conditionLabel,
+  parseConditionKey,
+} from '@/lib/digit-sequences';
+import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
 import type {
   ActiveSymbol,
   Tick,
@@ -162,6 +179,18 @@ interface SavedRobotSettings {
   differMartingaleAfterLosses: string;
   differTakeProfit: string;
   differStopLoss: string;
+  mmCondition: string;
+  mmLength: string;
+  mmMode: MmMode;
+  mmCounterKind: MmCounterKind;
+  mmCounterDigit: string;
+  mmInitialStake: string;
+  mmStakeMultiplier: string;
+  mmMartingaleAfterLosses: string;
+  mmTakeProfit: string;
+  mmStopLoss: string;
+  mmMaxStake: string;
+  mmCooldown: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -521,6 +550,62 @@ function getDifferLastBurstLabel(
   }
 }
 
+function getMmStatusLabel(
+  phase: MmPhase,
+  trade: { symbol: string; label: string } | null,
+  watching: number,
+  localize: (t: string) => string
+): string {
+  const where = trade ? ` · ${getSymbolDisplayName(trade.symbol)}` : '';
+  switch (phase) {
+    case 'awaiting-proposal':
+    case 'awaiting-buy':
+      return `${localize('Placing trade…')}${where}`;
+    case 'awaiting-settlement':
+      return `${localize('Trade running…')}${where}`;
+    default:
+      return `${localize('Watching')} ${watching} ${localize('markets…')}`;
+  }
+}
+
+function getMmStoppedLabel(reason: MmStopReason, localize: (t: string) => string): string | null {
+  switch (reason) {
+    case 'manual':
+      return localize('Stopped: Manual');
+    case 'take-profit':
+      return localize('Stopped: Take Profit');
+    case 'stop-loss':
+      return localize('Stopped: Stop Loss');
+    case 'insufficient-funds':
+      return localize('Stopped: Insufficient Funds');
+    case 'max-stake':
+      return localize('Stopped: Max Stake reached');
+    case 'timeout-proposal':
+      return localize('Stopped: No price received — check Reports');
+    case 'timeout-buy':
+      return localize('Stopped: Buy not confirmed — check Reports');
+    case 'timeout-settlement':
+      return localize('Stopped: No trade result — check Reports');
+    default:
+      return null;
+  }
+}
+
+/** Valid barrier digits for each explicit Counter trade kind. */
+function counterDigitRange(kind: MmCounterKind): number[] {
+  switch (kind) {
+    case 'over':
+      return [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    case 'under':
+      return [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    case 'matches':
+    case 'differs':
+      return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    default:
+      return [];
+  }
+}
+
 /** Small strip of the last digits seen while Differ was on — oldest to
  *  newest, the digits actually forming the current in-progress pattern
  *  highlighted (spaced `gap` ticks apart, walking back from the newest
@@ -822,7 +907,7 @@ export function TradeRobotView({
   // --- Ra mode: which automated strategy the left panel runs. Ra's stake
   // fields are entirely separate from the Martingale bot's (multiplier,
   // martingaleAfterLosses, initialAmount above) — Ra never reads those.
-  const [botMode, setBotMode] = useState<'martingale' | 'ra' | 'differ'>('martingale');
+  const [botMode, setBotMode] = useState<'martingale' | 'ra' | 'differ' | 'mm'>('martingale');
   const [raStreakCount, setRaStreakCount] = useState('5');
   const [raConfirmationStreak, setRaConfirmationStreak] = useState('5');
   const [raInitialStake, setRaInitialStake] = useState('1');
@@ -844,6 +929,22 @@ export function TradeRobotView({
   const [differMartingaleAfterLosses, setDifferMartingaleAfterLosses] = useState('0');
   const [differTakeProfit, setDifferTakeProfit] = useState('0');
   const [differStopLoss, setDifferStopLoss] = useState('0');
+
+  // --- MM (Multi-market) mode: trades when a run of exactly N digits meeting
+  // a condition (e.g. Over 5) ends on any market ticked in the Multi-market
+  // panel. Own stake/martingale state, separate from every other mode.
+  const [mmCondition, setMmCondition] = useState(conditionKey({ side: 'over', barrier: 5 }));
+  const [mmLength, setMmLength] = useState('3');
+  const [mmMode, setMmMode] = useState<MmMode>('trend');
+  const [mmCounterKind, setMmCounterKind] = useState<MmCounterKind>('under');
+  const [mmCounterDigit, setMmCounterDigit] = useState('5');
+  const [mmInitialStake, setMmInitialStake] = useState('1');
+  const [mmStakeMultiplier, setMmStakeMultiplier] = useState('2.5');
+  const [mmMartingaleAfterLosses, setMmMartingaleAfterLosses] = useState('0');
+  const [mmTakeProfit, setMmTakeProfit] = useState('0');
+  const [mmStopLoss, setMmStopLoss] = useState('0');
+  const [mmMaxStake, setMmMaxStake] = useState('0');
+  const [mmCooldown, setMmCooldown] = useState('0');
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -874,6 +975,23 @@ export function TradeRobotView({
         setDifferMartingaleAfterLosses(saved.differMartingaleAfterLosses);
       if (typeof saved.differTakeProfit === 'string') setDifferTakeProfit(saved.differTakeProfit);
       if (typeof saved.differStopLoss === 'string') setDifferStopLoss(saved.differStopLoss);
+      if (
+        typeof saved.mmCondition === 'string' &&
+        SEQUENCE_CONDITIONS.some((c) => conditionKey(c) === saved.mmCondition)
+      )
+        setMmCondition(saved.mmCondition);
+      if (typeof saved.mmLength === 'string') setMmLength(saved.mmLength);
+      if (saved.mmMode === 'trend' || saved.mmMode === 'counter') setMmMode(saved.mmMode);
+      if (typeof saved.mmCounterKind === 'string') setMmCounterKind(saved.mmCounterKind);
+      if (typeof saved.mmCounterDigit === 'string') setMmCounterDigit(saved.mmCounterDigit);
+      if (typeof saved.mmInitialStake === 'string') setMmInitialStake(saved.mmInitialStake);
+      if (typeof saved.mmStakeMultiplier === 'string') setMmStakeMultiplier(saved.mmStakeMultiplier);
+      if (typeof saved.mmMartingaleAfterLosses === 'string')
+        setMmMartingaleAfterLosses(saved.mmMartingaleAfterLosses);
+      if (typeof saved.mmTakeProfit === 'string') setMmTakeProfit(saved.mmTakeProfit);
+      if (typeof saved.mmStopLoss === 'string') setMmStopLoss(saved.mmStopLoss);
+      if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
+      if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -905,6 +1023,18 @@ export function TradeRobotView({
         differMartingaleAfterLosses,
         differTakeProfit,
         differStopLoss,
+        mmCondition,
+        mmLength,
+        mmMode,
+        mmCounterKind,
+        mmCounterDigit,
+        mmInitialStake,
+        mmStakeMultiplier,
+        mmMartingaleAfterLosses,
+        mmTakeProfit,
+        mmStopLoss,
+        mmMaxStake,
+        mmCooldown,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -983,10 +1113,63 @@ export function TradeRobotView({
     balance,
   });
 
+  const mmBot = useMmBot({
+    activeSymbolCode: activeSymbol?.underlying_symbol ?? null,
+    selectSymbol,
+    setStake,
+    setContractMode,
+    setSelectedDigit,
+    proposal,
+    isProposalLoading,
+    buyContract,
+    buyResult,
+    buyError,
+    clearBuyResult,
+    openPositions,
+    balance,
+  });
+
+  // The Multi-market panel and the MM bot share one scanner (and one market
+  // list — the panel's filter), so what the chart shows is exactly what the
+  // bot counts. Streams stay open only while the panel is visible or the bot
+  // is running.
+  const seqPanel = useSequencePanelSettings(symbols);
+  const seqScanner = useSequenceScanner({
+    ws,
+    isConnected,
+    symbols,
+    symbolCodes: seqPanel.activeCodes,
+    enabled: (activeTab === 'digits' && digitsView === 'multi') || mmBot.running,
+    onTick: mmBot.handleTick,
+  });
+  const mmWatch = useMemo(
+    () =>
+      mmBot.running
+        ? { condition: parseConditionKey(mmCondition), length: parseInt(mmLength, 10) || 3 }
+        : null,
+    // The bot's config is frozen at Start, but the inputs are disabled while
+    // it runs, so reading them live is equivalent and keeps this memo simple.
+    [mmBot.running, mmCondition, mmLength]
+  );
+
   // Whichever strategy is currently selected — used to gate Manual mode and
   // to decide what the Start/Stop button and header status line show.
   const activeBotRunning =
-    botMode === 'ra' ? raBot.running : botMode === 'differ' ? differBot.running : bot.running;
+    botMode === 'ra'
+      ? raBot.running
+      : botMode === 'differ'
+        ? differBot.running
+        : botMode === 'mm'
+          ? mmBot.running
+          : bot.running;
+  const activePnl =
+    botMode === 'ra'
+      ? raBot.pnl
+      : botMode === 'differ'
+        ? differBot.pnl
+        : botMode === 'mm'
+          ? mmBot.pnl
+          : bot.pnl;
 
   // Celebration modal — opens the moment the bot's phase flips to
   // `stopped-target`, independent of that phase so the user can dismiss it
@@ -1081,7 +1264,56 @@ export function TradeRobotView({
     });
   };
 
+  const handleMmStart = () => {
+    if (mmBot.running) {
+      mmBot.stop('manual');
+      toast.info(localize('Robot stopped'));
+      return;
+    }
+    const sequenceLength = parseInt(mmLength, 10);
+    if (!sequenceLength || sequenceLength < 2 || sequenceLength > 10) {
+      toast.error(localize('Enter a valid sequence length (2-10) first.'));
+      return;
+    }
+    const stake = parseFloat(mmInitialStake);
+    if (!stake || stake <= 0) {
+      toast.error(localize('Enter a valid MM stake first.'));
+      return;
+    }
+    if (seqPanel.activeCodes.length === 0) {
+      toast.error(localize('Pick at least one market in the Multi-market panel first.'));
+      return;
+    }
+    const counterDigit = parseInt(mmCounterDigit, 10);
+    if (mmMode === 'counter' && counterDigitRange(mmCounterKind).length > 0) {
+      if (!counterDigitRange(mmCounterKind).includes(counterDigit)) {
+        toast.error(localize('Pick a valid digit for the Counter trade first.'));
+        return;
+      }
+    }
+    mmBot.start({
+      condition: parseConditionKey(mmCondition),
+      sequenceLength,
+      mode: mmMode,
+      counterTrade: { kind: mmCounterKind, digit: isNaN(counterDigit) ? 0 : counterDigit },
+      initialStake: stake,
+      stakeMultiplier: parseFloat(mmStakeMultiplier) || 1,
+      martingaleStartAfter: Math.max(0, parseInt(mmMartingaleAfterLosses, 10) || 0),
+      takeProfit: parseFloat(mmTakeProfit) || 0,
+      stopLoss: parseFloat(mmStopLoss) || 0,
+      maxStake: parseFloat(mmMaxStake) || 0,
+      cooldownTicks: Math.max(0, parseInt(mmCooldown, 10) || 0),
+    });
+    toast.info(localize('Robot started'), {
+      description: localize('Watching the Multi-market panel for the chosen run length.'),
+    });
+  };
+
   const handleStart = () => {
+    if (botMode === 'mm') {
+      handleMmStart();
+      return;
+    }
     if (botMode === 'ra') {
       handleRaStart();
       return;
@@ -1186,6 +1418,13 @@ export function TradeRobotView({
                     raBot.burstActive,
                     raBot.burstPnl
                   )
+                : botMode === 'mm'
+                  ? getMmStatusLabel(
+                      mmBot.phase,
+                      mmBot.currentTrade,
+                      seqPanel.activeCodes.length,
+                      localize
+                    )
                 : botMode === 'differ'
                   ? getDifferStatusLabel(
                       differBot.phase,
@@ -1202,13 +1441,13 @@ export function TradeRobotView({
               <span
                 className={cn(
                   'text-sm font-mono font-bold tabular-nums',
-                  (botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl) >= 0
+                  activePnl >= 0
                     ? 'text-emerald-400'
                     : 'text-rose-400'
                 )}
               >
-                {(botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl) >= 0 ? '+' : ''}
-                {(botMode === 'ra' ? raBot.pnl : botMode === 'differ' ? differBot.pnl : bot.pnl).toFixed(2)}
+                {activePnl >= 0 ? '+' : ''}
+                {activePnl.toFixed(2)}
               </span>
               {botMode === 'martingale' && (
                 <button
@@ -1235,6 +1474,11 @@ export function TradeRobotView({
                 {getRaLastBurstLabel(raBot.lastBurstOutcome, localize)}
               </p>
             )}
+          {botMode === 'mm' && !mmBot.running && getMmStoppedLabel(mmBot.stoppedReason, localize) && (
+            <p className="text-[11px] text-muted-foreground px-0.5">
+              {getMmStoppedLabel(mmBot.stoppedReason, localize)}
+            </p>
+          )}
           {botMode === 'differ' && !differBot.running && getDifferStoppedLabel(differBot.stoppedReason, localize) && (
             <p className="text-[11px] text-muted-foreground px-0.5">
               {getDifferStoppedLabel(differBot.stoppedReason, localize)}
@@ -1258,7 +1502,7 @@ export function TradeRobotView({
               type="single"
               value={botMode}
               onValueChange={(v) => {
-                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra' | 'differ');
+                if (v && !activeBotRunning) setBotMode(v as 'martingale' | 'ra' | 'differ' | 'mm');
               }}
               className="w-full gap-0 rounded-full bg-muted p-1"
             >
@@ -1283,10 +1527,19 @@ export function TradeRobotView({
               >
                 <Localize i18n_default_text="Differ" />
               </ToggleGroupItem>
+              <ToggleGroupItem
+                value="mm"
+                disabled={activeBotRunning}
+                title={localize('Multi-market: trades when a run of an exact length ends on any watched market')}
+                className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground"
+              >
+                <Localize i18n_default_text="MM" />
+              </ToggleGroupItem>
             </ToggleGroup>
           </div>
 
           <fieldset disabled={activeBotRunning} className="space-y-3 border-0 p-0 m-0 min-w-0">
+          {botMode !== 'mm' ? (
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-shadow duration-200 hover:ring-1 hover:ring-yellow-400/70 hover:shadow-[0_0_14px_3px_rgba(250,204,21,0.45)]">
             <Label className="text-xs font-semibold text-foreground/90">
               <Localize i18n_default_text="Market" />
@@ -1297,6 +1550,16 @@ export function TradeRobotView({
               onSymbolChange={selectSymbol}
             />
           </div>
+          ) : (
+          <div className="space-y-1 rounded-lg border border-border bg-muted/30 px-2.5 py-2">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Markets" />
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              {localize('Watching {{n}} markets from the Multi-market panel (Digits tab → filter button). Each trade goes to the market that signalled.', { n: seqPanel.activeCodes.length })}
+            </p>
+          </div>
+          )}
 
           {botMode === 'martingale' && (
           <>
@@ -1796,6 +2059,258 @@ export function TradeRobotView({
           )}
           </>
           )}
+          {botMode === 'mm' && (
+          <>
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Duration" />
+            </Label>
+            <Input
+              type="number"
+              value={duration}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val)) setDuration(val);
+              }}
+              min={durationLimits.min}
+              max={durationLimits.max}
+              labelRight={localize('Ticks')}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('The digit condition whose runs are counted, e.g. Over 5 = last digit 6, 7, 8 or 9.')}
+              >
+                <Localize i18n_default_text="Watch digit" />
+              </Label>
+              <Select value={mmCondition} onValueChange={setMmCondition}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SEQUENCE_CONDITIONS.map((c) => (
+                    <SelectItem key={conditionKey(c)} value={conditionKey(c)}>
+                      {conditionLabel(c)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Fires when a run ends after exactly this many ticks. Shorter or longer runs are ignored. 2-10.')}
+              >
+                <Localize i18n_default_text="Exact length" />
+              </Label>
+              <Select value={mmLength} onValueChange={setMmLength}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground px-1.5">
+            {localize(
+              'Fires when a run of {{label}} ends after exactly {{n}} ticks on any watched market — i.e. that length\'s bar in the chart goes up by one.',
+              { label: conditionLabel(parseConditionKey(mmCondition)), n: mmLength }
+            )}
+          </p>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Mode" />
+            </Label>
+            <ToggleGroup
+              type="single"
+              value={mmMode}
+              onValueChange={(v) => {
+                if (v) setMmMode(v as MmMode);
+              }}
+              className="w-full gap-0 rounded-full bg-muted p-1"
+            >
+              <ToggleGroupItem value="trend" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Trend" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="counter" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                <Localize i18n_default_text="Counter" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] text-muted-foreground">
+              {mmMode === 'trend'
+                ? localize('Trend trades the watched digit itself: {{label}}, on the market that signalled.', {
+                    label: conditionLabel(parseConditionKey(mmCondition)),
+                  })
+                : localize('Counter trades exactly the contract you choose below, on the market that signalled.')}
+            </p>
+          </div>
+
+          {mmMode === 'counter' && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+                <Label className="text-xs font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Counter trade" />
+                </Label>
+                <Select
+                  value={mmCounterKind}
+                  onValueChange={(v) => {
+                    const kind = v as MmCounterKind;
+                    setMmCounterKind(kind);
+                    const range = counterDigitRange(kind);
+                    if (range.length > 0 && !range.includes(parseInt(mmCounterDigit, 10))) {
+                      setMmCounterDigit(String(range[Math.min(5, range.length - 1)]));
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="over">{localize('Over')}</SelectItem>
+                    <SelectItem value="under">{localize('Under')}</SelectItem>
+                    <SelectItem value="even">{localize('Even')}</SelectItem>
+                    <SelectItem value="odd">{localize('Odd')}</SelectItem>
+                    <SelectItem value="matches">{localize('Matches')}</SelectItem>
+                    <SelectItem value="differs">{localize('Differs')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {counterDigitRange(mmCounterKind).length > 0 && (
+                <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+                  <Label className="text-xs font-semibold text-foreground/90">
+                    <Localize i18n_default_text="Digit" />
+                  </Label>
+                  <Select value={mmCounterDigit} onValueChange={setMmCounterDigit}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {counterDigitRange(mmCounterKind).map((d) => (
+                        <SelectItem key={d} value={String(d)}>
+                          {d}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake" />
+              </Label>
+              <Input value={mmInitialStake} onChange={(e) => setMmInitialStake(e.target.value)} />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="Stake Multiplier" />
+              </Label>
+              <Input value={mmStakeMultiplier} onChange={(e) => setMmStakeMultiplier(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+            <Label
+              className="text-xs font-semibold text-foreground/90"
+              title={localize(
+                'Stays at the initial stake for this many losses before the multiplier kicks in. 0 = multiply from the first loss.'
+              )}
+            >
+              <Localize i18n_default_text="Start Martingale after N losses" />
+            </Label>
+            <Input
+              value={mmMartingaleAfterLosses}
+              onChange={(e) => setMmMartingaleAfterLosses(e.target.value)}
+            />
+          </div>
+
+          <div className="border-t border-border pt-2 grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Once total profit across the whole run reaches this amount, MM stops. 0 = off.')}
+              >
+                <Localize i18n_default_text="Take Profit" />
+              </Label>
+              <Input value={mmTakeProfit} onChange={(e) => setMmTakeProfit(e.target.value)} labelRight="USD" />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Once total loss across the whole run reaches this amount, MM stops. 0 = off.')}
+              >
+                <Localize i18n_default_text="Stop Loss" />
+              </Label>
+              <Input value={mmStopLoss} onChange={(e) => setMmStopLoss(e.target.value)} labelRight="USD" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('MM stops instead of placing a stake above this. Caps how far the martingale can climb. 0 = off.')}
+              >
+                <Localize i18n_default_text="Max Stake" />
+              </Label>
+              <Input value={mmMaxStake} onChange={(e) => setMmMaxStake(e.target.value)} labelRight="USD" />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('After MM trades a market, ignore its signals for this many of its ticks. 0 = off.')}
+              >
+                <Localize i18n_default_text="Market cooldown" />
+              </Label>
+              <Input value={mmCooldown} onChange={(e) => setMmCooldown(e.target.value)} labelRight={localize('ticks')} />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
+            <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. A loss raises the stake per the martingale settings; a win returns to the base stake. Take Profit, Stop Loss and Max Stake stop MM outright." />
+          </p>
+
+          {(mmBot.running || mmBot.signalCount > 0) && (
+            <div className="rounded-md bg-muted/40 px-2.5 py-2 text-[11px] space-y-0.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground/90">
+                  <Localize i18n_default_text="Signals" />
+                </span>
+                <span className="tabular-nums text-foreground/80">
+                  {mmBot.signalCount} · {localize('skipped')} {mmBot.skippedCount}
+                </span>
+              </div>
+              {mmBot.lastSignal && (
+                <p className="text-muted-foreground">
+                  {getSymbolDisplayName(mmBot.lastSignal.symbol)} · {localize('run of')} {mmBot.lastSignal.runLength} →{' '}
+                  {mmBot.lastSignal.action === 'traded'
+                    ? `${localize('traded')} ${mmBot.lastSignal.tradeLabel}`
+                    : mmBot.lastSignal.action === 'busy'
+                      ? localize('skipped (trade in progress)')
+                      : localize('skipped (market cooldown)')}
+                </p>
+              )}
+              {mmBot.lossStreak > 0 && (
+                <p className="text-muted-foreground">
+                  {localize('Current loss streak')}: {mmBot.lossStreak}
+                </p>
+              )}
+            </div>
+          )}
+          </>
+          )}
           </fieldset>
 
           <Button
@@ -1900,10 +2415,10 @@ export function TradeRobotView({
 
           {activeTab === 'digits' && digitsView === 'multi' && (
             <MultiMarketSequences
-              ws={ws}
-              isConnected={isConnected}
-              symbols={symbols}
-              active={activeTab === 'digits' && digitsView === 'multi'}
+              panel={seqPanel}
+              streams={seqScanner.streams}
+              botWatch={mmWatch}
+              lastSignal={mmBot.lastSignal}
             />
           )}
 
@@ -2090,6 +2605,50 @@ export function TradeRobotView({
                     )}
                   </div>
                   <div className="flex items-center gap-3">
+                    <span className="tabular-nums text-foreground/70">
+                      {localize('Stake')} {entry.stake.toFixed(2)}
+                    </span>
+                    <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {entry.won ? localize('Win') : localize('Loss')}
+                    </span>
+                    <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                      {entry.profit >= 0 ? '+' : ''}
+                      {entry.profit.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'logs' && botMode === 'mm' && (
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+              {mmBot.log.length === 0 && (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  <Localize i18n_default_text="No robot activity yet — start it from the left panel." />
+                </div>
+              )}
+              {[...mmBot.log].reverse().map((entry: MmLogEntry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between gap-2 text-xs rounded-md border border-border px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/10 text-primary">
+                      {localize('Real')}
+                    </span>
+                    <span className="font-semibold text-foreground">{getSymbolDisplayName(entry.symbol)}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
+                      {localize('Run of')} {entry.runLength}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/15 text-primary">
+                      {localize('Traded')} {entry.tradeLabel}
+                    </span>
+                    <span className="text-foreground/80 font-medium">
+                      {new Date(entry.time).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
                     <span className="tabular-nums text-foreground/70">
                       {localize('Stake')} {entry.stake.toFixed(2)}
                     </span>
