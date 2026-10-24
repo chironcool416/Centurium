@@ -36,6 +36,7 @@ import {
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
 import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
+import { MultiMarketSequences } from '@/components/custom/multi-market-sequences';
 import type {
   ActiveSymbol,
   Tick,
@@ -775,6 +776,8 @@ export function TradeRobotView({
   const isManualOpen = openSide === 'manual';
 
   const [activeTab, setActiveTab] = useState<Tab>('digits');
+  // Digits tab sub-view: the selected market only, or the multi-market sequence scanner.
+  const [digitsView, setDigitsView] = useState<'single' | 'multi'>('single');
 
   // Multi-market digit alerts — deliberately independent of `activeSymbol`
   // above: each rule opens and maintains its own tick subscription, so a
@@ -1872,6 +1875,39 @@ export function TradeRobotView({
         </CardHeader>
         <CardContent className="pt-4 space-y-6">
           {activeTab === 'digits' && (
+            <div className="flex items-center gap-5 border-b border-border -mt-1">
+              {(
+                [
+                  ['single', localize('Single market')],
+                  ['multi', localize('Multi-market')],
+                ] as ['single' | 'multi', string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setDigitsView(key)}
+                  className={cn(
+                    'pb-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors',
+                    digitsView === key
+                      ? 'border-primary text-foreground'
+                      : 'border-transparent text-foreground/60 hover:text-foreground'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'digits' && digitsView === 'multi' && (
+            <MultiMarketSequences
+              ws={ws}
+              isConnected={isConnected}
+              symbols={symbols}
+              active={activeTab === 'digits' && digitsView === 'multi'}
+            />
+          )}
+
+          {activeTab === 'digits' && digitsView === 'single' && (
             <>
               <div className="space-y-2">
                 <p className="text-center text-sm font-medium">
