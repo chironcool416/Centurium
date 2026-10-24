@@ -554,6 +554,7 @@ function getMmStatusLabel(
   phase: MmPhase,
   trade: { symbol: string; label: string } | null,
   watching: number,
+  lockedSymbol: string | null,
   localize: (t: string) => string
 ): string {
   const where = trade ? ` · ${getSymbolDisplayName(trade.symbol)}` : '';
@@ -564,6 +565,7 @@ function getMmStatusLabel(
     case 'awaiting-settlement':
       return `${localize('Trade running…')}${where}`;
     default:
+      if (lockedSymbol) return `${localize('Recovering on')} ${getSymbolDisplayName(lockedSymbol)}…`;
       return `${localize('Watching')} ${watching} ${localize('markets…')}`;
   }
 }
@@ -1423,6 +1425,7 @@ export function TradeRobotView({
                       mmBot.phase,
                       mmBot.currentTrade,
                       seqPanel.activeCodes.length,
+                      mmBot.lockedSymbol,
                       localize
                     )
                 : botMode === 'differ'
@@ -2279,7 +2282,7 @@ export function TradeRobotView({
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. A loss raises the stake per the martingale settings; a win returns to the base stake. Take Profit, Stop Loss and Max Stake stop MM outright." />
+            <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. After a loss MM stays on the market that lost — signals from other markets are skipped and the next (martingale) trade waits for a fresh signal on that same market — until a win returns it to the base stake and all markets. Take Profit, Stop Loss and Max Stake stop MM outright." />
           </p>
 
           {(mmBot.running || mmBot.signalCount > 0) && (
@@ -2299,12 +2302,15 @@ export function TradeRobotView({
                     ? `${localize('traded')} ${mmBot.lastSignal.tradeLabel}`
                     : mmBot.lastSignal.action === 'busy'
                       ? localize('skipped (trade in progress)')
-                      : localize('skipped (market cooldown)')}
+                      : mmBot.lastSignal.action === 'locked'
+                        ? localize('skipped (recovering on another market)')
+                        : localize('skipped (market cooldown)')}
                 </p>
               )}
               {mmBot.lossStreak > 0 && (
                 <p className="text-muted-foreground">
                   {localize('Current loss streak')}: {mmBot.lossStreak}
+                  {mmBot.lockedSymbol && ` · ${localize('locked to')} ${getSymbolDisplayName(mmBot.lockedSymbol)}`}
                 </p>
               )}
             </div>
