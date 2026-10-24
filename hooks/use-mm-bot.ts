@@ -1,0 +1,473 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ProposalInfo, BuyResult } from '@deriv/core';
+import type { ContractMode, OpenPosition } from '@/lib/types';
+import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use-phase-watchdog';
+import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/digit-sequences';
+
+/**
+ * "MM" (Multi-market) bot.
+ *
+ * Signal: on any watched market, a run of consecutive digits that satisfy the
+ * chosen condition (e.g. Over 5) ends after *exactly* `sequenceLength` ticks
+ * — i.e. that length's bar in the Multi-market sequence chart just went up by
+ * one. Runs shorter or longer than that length do nothing.
+ *
+ * Action, on the market that signalled:
+ *  - Trend:   trade the condition itself (Over 5 → Over 5).
+ *  - Counter: trade whatever the user picked explicitly (`counterTrade`) —
+ *             nothing is inferred from the signal.
+ *
+ * Execution reuses the same manual trade panel flow as the other bots (set
+ * stake / contract / barrier, wait for the proposal, buy, wait for the
+ * contract to settle). Because the signal can come from any market, the bot
+ * first switches the panel's active market to the signalling one and will not
+ * buy until the quote it holds is for that market.
+ *
+ * Money handling mirrors the Differ bot: martingale multiplier applied after
+ * `martingaleStartAfter` consecutive losses, whole-run Take Profit / Stop
+ * Loss in USD, insufficient-funds stop; plus an optional Max Stake stop and a
+ * per-market cooldown. One trade at a time: signals that arrive while a trade
+ * is in flight are counted but not taken.
+ */
+
+export type MmMode = 'trend' | 'counter';
+export type MmCounterKind = 'over' | 'under' | 'even' | 'odd' | 'matches' | 'differs';
+
+export interface MmCounterTrade {
+  kind: MmCounterKind;
+  /** Barrier / digit. Ignored for even/odd. Over: 0-8, Under: 1-9, Matches/Differs: 0-9. */
+  digit: number;
+}
+
+export type MmStopReason =
+  | 'manual'
+  | 'take-profit'
+  | 'stop-loss'
+  | 'insufficient-funds'
+  | 'max-stake'
+  | TimeoutReason
+  | null;
+export type MmPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-settlement';
+
+export interface MmBotConfig {
+  /** The digit condition whose runs are watched, e.g. Over 5. */
+  condition: SequenceCondition;
+  /** Exact run length that triggers a signal (2-10). */
+  sequenceLength: number;
+  mode: MmMode;
+  /** Only used in Counter mode. */
+  counterTrade: MmCounterTrade;
+  initialStake: number;
+  stakeMultiplier: number;
+  /** Consecutive losses before the multiplier starts applying. 0 = from the first loss. */
+  martingaleStartAfter: number;
+  /** Whole-run take profit in USD. 0 = off. */
+  takeProfit: number;
+  /** Whole-run stop loss in USD (positive number). 0 = off. */
+  stopLoss: number;
+  /** Stop the bot instead of placing a stake above this. 0 = off. */
+  maxStake: number;
+  /** Ticks a market sits out after the bot traded it. 0 = off. */
+  cooldownTicks: number;
+}
+
+export interface MmLogEntry {
+  id: number;
+  time: number;
+  symbol: string;
+  runLength: number;
+  /** What was bought, e.g. "Over 5" or "Even". */
+  tradeLabel: string;
+  exitSpot: number | null;
+  won: boolean;
+  stake: number;
+  profit: number;
+}
+
+export interface MmSignal {
+  id: number;
+  time: number;
+  symbol: string;
+  runLength: number;
+  action: 'traded' | 'busy' | 'cooldown';
+  tradeLabel: string;
+}
+
+interface ResolvedTrade {
+  contractMode: ContractMode;
+  digit: number;
+  label: string;
+}
+
+export function resolveMmTrade(cfg: MmBotConfig): ResolvedTrade {
+  if (cfg.mode === 'trend') {
+    const { side, barrier } = cfg.condition;
+    return {
+      contractMode: side === 'over' ? 'DIGITOVER' : 'DIGITUNDER',
+      digit: barrier,
+      label: conditionLabel(cfg.condition),
+    };
+  }
+  const { kind, digit } = cfg.counterTrade;
+  switch (kind) {
+    case 'over':
+      return { contractMode: 'DIGITOVER', digit, label: `Over ${digit}` };
+    case 'under':
+      return { contractMode: 'DIGITUNDER', digit, label: `Under ${digit}` };
+    case 'matches':
+      return { contractMode: 'DIGITMATCH', digit, label: `Matches ${digit}` };
+    case 'differs':
+      return { contractMode: 'DIGITDIFF', digit, label: `Differs ${digit}` };
+    case 'even':
+      return { contractMode: 'DIGITEVEN', digit: 0, label: 'Even' };
+    case 'odd':
+      return { contractMode: 'DIGITODD', digit: 0, label: 'Odd' };
+  }
+}
+
+/** Stake for the next trade given the current consecutive-loss count. */
+export function mmStakeFor(cfg: MmBotConfig, lossStreak: number): number {
+  const lossesPastGrace = Math.max(0, lossStreak - cfg.martingaleStartAfter);
+  return cfg.initialStake * Math.pow(cfg.stakeMultiplier, lossesPastGrace);
+}
+
+interface Params {
+  /** Underlying symbol of the market currently selected in the trade panel. */
+  activeSymbolCode: string | null;
+  selectSymbol: (symbol: string) => void;
+  setStake: (value: string) => void;
+  setContractMode: (mode: ContractMode) => void;
+  setSelectedDigit: (digit: number) => void;
+  proposal: ProposalInfo | null;
+  isProposalLoading: boolean;
+  buyContract: () => Promise<void>;
+  buyResult: BuyResult | null;
+  buyError: string | null;
+  clearBuyResult: () => void;
+  openPositions: OpenPosition[];
+  balance: number | null;
+}
+
+interface ActiveTrade {
+  symbol: string;
+  runLength: number;
+  contractMode: ContractMode;
+  digit: number;
+  label: string;
+  stake: number;
+}
+
+export function useMmBot({
+  activeSymbolCode,
+  selectSymbol,
+  setStake,
+  setContractMode,
+  setSelectedDigit,
+  proposal,
+  isProposalLoading,
+  buyContract,
+  buyResult,
+  buyError,
+  clearBuyResult,
+  openPositions,
+  balance,
+}: Params) {
+  const [enabled, setEnabled] = useState(false);
+  const [phase, setPhase] = useState<MmPhase>('idle');
+  const [pnl, setPnl] = useState(0);
+  const [stoppedReason, setStoppedReason] = useState<MmStopReason>(null);
+  const [log, setLog] = useState<MmLogEntry[]>([]);
+  const [lastSignal, setLastSignal] = useState<MmSignal | null>(null);
+  const [signalCount, setSignalCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
+  const [currentTrade, setCurrentTrade] = useState<{ symbol: string; label: string } | null>(null);
+  const [lossStreak, setLossStreak] = useState(0);
+  const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
+
+  const cfgRef = useRef<MmBotConfig | null>(null);
+  const enabledRef = useRef(false);
+  const phaseRef = useRef<MmPhase>('idle');
+  const pnlRef = useRef(0);
+  const lossStreakRef = useRef(0);
+  const activeTradeRef = useRef<ActiveTrade | null>(null);
+  const pendingContractIdRef = useRef<number | null>(null);
+  const cooldownRef = useRef<Record<string, number>>({});
+  const logIdRef = useRef(0);
+  const signalIdRef = useRef(0);
+  const sessionStartRef = useRef<number | null>(null);
+  const balanceRef = useRef<number | null>(balance);
+  const sawProposalLoadingRef = useRef(false);
+  const lastFireKeyRef = useRef<string | null>(null);
+  const skipLoadingWaitRef = useRef(false);
+
+  // Latest versions of the trade-panel callbacks, read from `handleTick`
+  // (which must stay referentially stable for the scanner).
+  const apiRef = useRef({ selectSymbol, setStake, setContractMode, setSelectedDigit });
+  apiRef.current = { selectSymbol, setStake, setContractMode, setSelectedDigit };
+
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
+
+  const setPhaseSync = useCallback((next: MmPhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
+  const pushLog = useCallback((entry: Omit<MmLogEntry, 'id' | 'time'>) => {
+    const id = logIdRef.current++;
+    setLog((prev) => [...prev.slice(-49), { ...entry, id, time: Date.now() }]);
+  }, []);
+
+  const start = useCallback(
+    (cfg: MmBotConfig) => {
+      cfgRef.current = cfg;
+      pnlRef.current = 0;
+      lossStreakRef.current = 0;
+      activeTradeRef.current = null;
+      pendingContractIdRef.current = null;
+      cooldownRef.current = {};
+      lastFireKeyRef.current = null;
+      skipLoadingWaitRef.current = false;
+      logIdRef.current = 0;
+      signalIdRef.current = 0;
+      setPnl(0);
+      setLossStreak(0);
+      setLog([]);
+      setLastSignal(null);
+      setSignalCount(0);
+      setSkippedCount(0);
+      setCurrentTrade(null);
+      setStoppedReason(null);
+      setSessionDurationMs(null);
+      sessionStartRef.current = Date.now();
+      setPhaseSync('idle');
+      enabledRef.current = true;
+      setEnabled(true);
+    },
+    [setPhaseSync]
+  );
+
+  const stop = useCallback(
+    (reason: MmStopReason = 'manual') => {
+      enabledRef.current = false;
+      setEnabled(false);
+      setStoppedReason(reason);
+      setPhaseSync('idle');
+      pendingContractIdRef.current = null;
+      activeTradeRef.current = null;
+      setCurrentTrade(null);
+      setSessionDurationMs(
+        sessionStartRef.current !== null ? Date.now() - sessionStartRef.current : null
+      );
+    },
+    [setPhaseSync]
+  );
+
+  const recordSignal = useCallback(
+    (symbol: string, runLength: number, action: MmSignal['action'], tradeLabel: string) => {
+      setSignalCount((n) => n + 1);
+      if (action !== 'traded') setSkippedCount((n) => n + 1);
+      setLastSignal({
+        id: ++signalIdRef.current,
+        time: Date.now(),
+        symbol,
+        runLength,
+        action,
+        tradeLabel,
+      });
+    },
+    []
+  );
+
+  /**
+   * Fed by the scanner for every new live tick of every watched market.
+   * Detects "a run of exactly N just ended on this market".
+   */
+  const handleTick = useCallback(
+    (symbol: string, digits: readonly number[]) => {
+      if (!enabledRef.current) return;
+      const cfg = cfgRef.current;
+      if (!cfg) return;
+
+      const cd = cooldownRef.current[symbol] ?? 0;
+      if (cd > 0) cooldownRef.current[symbol] = cd - 1;
+
+      // Did a run of exactly the watched length just end on this tick?
+      if (!runJustEndedAt(digits, cfg.condition, cfg.sequenceLength)) return;
+      const run = cfg.sequenceLength;
+
+      const trade = resolveMmTrade(cfg);
+
+      if (phaseRef.current !== 'idle') {
+        recordSignal(symbol, run, 'busy', trade.label);
+        return;
+      }
+      if ((cooldownRef.current[symbol] ?? 0) > 0) {
+        recordSignal(symbol, run, 'cooldown', trade.label);
+        return;
+      }
+
+      const stakeAmount = mmStakeFor(cfg, lossStreakRef.current);
+      if (cfg.maxStake > 0 && stakeAmount > cfg.maxStake + 0.001) {
+        stop('max-stake');
+        return;
+      }
+      const bal = balanceRef.current;
+      if (bal !== null && stakeAmount > bal + 0.001) {
+        stop('insufficient-funds');
+        return;
+      }
+
+      recordSignal(symbol, run, 'traded', trade.label);
+
+      const fireKey = `${symbol}:${trade.contractMode}:${trade.digit}:${stakeAmount.toFixed(2)}`;
+      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      lastFireKeyRef.current = fireKey;
+
+      activeTradeRef.current = {
+        symbol,
+        runLength: run,
+        contractMode: trade.contractMode,
+        digit: trade.digit,
+        label: trade.label,
+        stake: stakeAmount,
+      };
+      setCurrentTrade({ symbol, label: trade.label });
+
+      // Point the trade panel at the signalling market and the chosen contract.
+      const api = apiRef.current;
+      api.selectSymbol(symbol);
+      api.setStake(stakeAmount.toFixed(2));
+      api.setContractMode(trade.contractMode);
+      if (trade.contractMode !== 'DIGITEVEN' && trade.contractMode !== 'DIGITODD') {
+        api.setSelectedDigit(trade.digit);
+      }
+
+      sawProposalLoadingRef.current = false;
+      setPhaseSync('awaiting-proposal');
+    },
+    [recordSignal, setPhaseSync, stop]
+  );
+
+  // --- Buy once a quote for the right market / stake is ready.
+  useEffect(() => {
+    if (phase !== 'awaiting-proposal') return;
+    const trade = activeTradeRef.current;
+    if (!trade) return;
+    // The panel must actually be on the signalling market before any quote counts.
+    if (activeSymbolCode !== trade.symbol) return;
+    if (isProposalLoading) {
+      sawProposalLoadingRef.current = true;
+      return;
+    }
+    if (!proposal) return;
+    if (!skipLoadingWaitRef.current && !sawProposalLoadingRef.current) return;
+    // Never buy a quote for a different stake than the one just asked for.
+    if (Math.abs(proposal.askPrice - Number(trade.stake.toFixed(2))) > 0.005) return;
+    setPhaseSync('awaiting-buy');
+    buyContract();
+  }, [phase, proposal, isProposalLoading, activeSymbolCode, buyContract, setPhaseSync]);
+
+  // --- Bought: remember the contract and wait for it to settle.
+  useEffect(() => {
+    if (phase !== 'awaiting-buy') return;
+    if (buyResult) {
+      pendingContractIdRef.current = buyResult.contractId;
+      clearBuyResult();
+      setPhaseSync('awaiting-settlement');
+    } else if (buyError) {
+      // Failed to place: drop this signal and keep watching.
+      activeTradeRef.current = null;
+      setCurrentTrade(null);
+      setPhaseSync('idle');
+    }
+  }, [phase, buyResult, buyError, clearBuyResult, setPhaseSync]);
+
+  // --- Settlement.
+  useEffect(() => {
+    if (phase !== 'awaiting-settlement' || pendingContractIdRef.current === null) return;
+    const pos = openPositions.find((p) => p.contract_id === pendingContractIdRef.current);
+    if (!pos) return;
+    const isClosed = !!pos.is_sold || !!pos.is_expired || pos.status !== 'open';
+    if (!isClosed) return;
+
+    const profit = parseFloat(pos.profit);
+    const won = profit > 0;
+    pendingContractIdRef.current = null;
+
+    const lastStreamTick =
+      pos.tick_stream && pos.tick_stream.length > 0 ? pos.tick_stream[pos.tick_stream.length - 1] : null;
+    const exitSpot =
+      typeof pos.exit_spot === 'number' ? pos.exit_spot : lastStreamTick ? lastStreamTick.tick : null;
+
+    const trade = activeTradeRef.current;
+    const cfg = cfgRef.current;
+    if (trade) {
+      pushLog({
+        symbol: trade.symbol,
+        runLength: trade.runLength,
+        tradeLabel: trade.label,
+        exitSpot,
+        won,
+        stake: trade.stake,
+        profit,
+      });
+      if (cfg && cfg.cooldownTicks > 0) cooldownRef.current[trade.symbol] = cfg.cooldownTicks;
+    }
+
+    lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
+    setLossStreak(lossStreakRef.current);
+
+    const nextPnl = pnlRef.current + profit;
+    pnlRef.current = nextPnl;
+    setPnl(nextPnl);
+
+    activeTradeRef.current = null;
+    setCurrentTrade(null);
+
+    if (cfg) {
+      const hitTakeProfit = cfg.takeProfit > 0 && nextPnl >= cfg.takeProfit;
+      const hitStopLoss = cfg.stopLoss > 0 && nextPnl <= -cfg.stopLoss;
+      if (hitTakeProfit || hitStopLoss) {
+        stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
+        return;
+      }
+      if (!won) {
+        const nextStake = mmStakeFor(cfg, lossStreakRef.current);
+        if (cfg.maxStake > 0 && nextStake > cfg.maxStake + 0.001) {
+          stop('max-stake');
+          return;
+        }
+        const bal = balanceRef.current;
+        if (bal !== null && nextStake > bal + 0.001) {
+          stop('insufficient-funds');
+          return;
+        }
+      }
+    }
+    setPhaseSync('idle');
+  }, [phase, openPositions, pushLog, stop, setPhaseSync]);
+
+  usePhaseWatchdog(enabled, phase, (stuckPhase) => stop(timeoutReason(stuckPhase)));
+
+  return {
+    enabled,
+    running: enabled,
+    phase,
+    pnl,
+    stoppedReason,
+    log,
+    lastSignal,
+    signalCount,
+    skippedCount,
+    currentTrade,
+    lossStreak,
+    sessionDurationMs,
+    start,
+    stop,
+    handleTick,
+  };
+}
