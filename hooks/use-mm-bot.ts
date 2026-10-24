@@ -25,6 +25,12 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * first switches the panel's active market to the signalling one and will not
  * buy until the quote it holds is for that market.
  *
+ * Loss lock: after a loss, the bot stays on the market that lost. Signals from
+ * every other market are skipped, and the next trade (with the martingale
+ * stake) only happens on a fresh signal from that same market, until a win
+ * releases the lock and all markets are watched again. The market cooldown
+ * does not apply to the locked market, so recovery isn't delayed by it.
+ *
  * Money handling mirrors the Differ bot: martingale multiplier applied after
  * `martingaleStartAfter` consecutive losses, whole-run Take Profit / Stop
  * Loss in USD, insufficient-funds stop; plus an optional Max Stake stop and a
@@ -91,7 +97,7 @@ export interface MmSignal {
   time: number;
   symbol: string;
   runLength: number;
-  action: 'traded' | 'busy' | 'cooldown';
+  action: 'traded' | 'busy' | 'cooldown' | 'locked';
   tradeLabel: string;
 }
 
@@ -184,6 +190,8 @@ export function useMmBot({
   const [skippedCount, setSkippedCount] = useState(0);
   const [currentTrade, setCurrentTrade] = useState<{ symbol: string; label: string } | null>(null);
   const [lossStreak, setLossStreak] = useState(0);
+  // Market the bot is recovering on after a loss; null when free to take any market.
+  const [lockedSymbol, setLockedSymbol] = useState<string | null>(null);
   const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
 
   const cfgRef = useRef<MmBotConfig | null>(null);
@@ -191,6 +199,7 @@ export function useMmBot({
   const phaseRef = useRef<MmPhase>('idle');
   const pnlRef = useRef(0);
   const lossStreakRef = useRef(0);
+  const lockedSymbolRef = useRef<string | null>(null);
   const activeTradeRef = useRef<ActiveTrade | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   const cooldownRef = useRef<Record<string, number>>({});
@@ -226,6 +235,8 @@ export function useMmBot({
       cfgRef.current = cfg;
       pnlRef.current = 0;
       lossStreakRef.current = 0;
+      lockedSymbolRef.current = null;
+      setLockedSymbol(null);
       activeTradeRef.current = null;
       pendingContractIdRef.current = null;
       cooldownRef.current = {};
@@ -254,6 +265,8 @@ export function useMmBot({
     (reason: MmStopReason = 'manual') => {
       enabledRef.current = false;
       setEnabled(false);
+      lockedSymbolRef.current = null;
+      setLockedSymbol(null);
       setStoppedReason(reason);
       setPhaseSync('idle');
       pendingContractIdRef.current = null;
@@ -301,11 +314,17 @@ export function useMmBot({
 
       const trade = resolveMmTrade(cfg);
 
+      // Recovering from a loss: only the market that lost may trade.
+      const locked = lockedSymbolRef.current;
+      if (locked !== null && symbol !== locked) {
+        recordSignal(symbol, run, 'locked', trade.label);
+        return;
+      }
       if (phaseRef.current !== 'idle') {
         recordSignal(symbol, run, 'busy', trade.label);
         return;
       }
-      if ((cooldownRef.current[symbol] ?? 0) > 0) {
+      if (locked === null && (cooldownRef.current[symbol] ?? 0) > 0) {
         recordSignal(symbol, run, 'cooldown', trade.label);
         return;
       }
@@ -420,6 +439,10 @@ export function useMmBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
     setLossStreak(lossStreakRef.current);
+    // A loss pins the bot to that market; a win frees it.
+    const nextLock = won ? null : (trade?.symbol ?? lockedSymbolRef.current);
+    lockedSymbolRef.current = nextLock;
+    setLockedSymbol(nextLock);
 
     const nextPnl = pnlRef.current + profit;
     pnlRef.current = nextPnl;
@@ -465,6 +488,7 @@ export function useMmBot({
     skippedCount,
     currentTrade,
     lossStreak,
+    lockedSymbol,
     sessionDurationMs,
     start,
     stop,
