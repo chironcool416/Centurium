@@ -120,3 +120,28 @@ export function expectedInBin(ticks: number, p: number, bin: SequenceBin): numbe
   if (bin.open) return ticks * (1 - p) * Math.pow(p, bin.from);
   return ticks * (1 - p) * (1 - p) * Math.pow(p, bin.from);
 }
+
+/**
+ * Did a run of exactly `length` consecutive hits just end on the newest digit?
+ *
+ * True only when the newest digit is a miss, the hits immediately before it
+ * number exactly `length`, and that run's start is inside the buffer (a run
+ * that reaches the buffer's first digit has an unknown true length).
+ * Used by the MM bot for tick-by-tick detection.
+ */
+export function runJustEndedAt(
+  digits: readonly number[],
+  c: SequenceCondition,
+  length: number
+): boolean {
+  const n = digits.length;
+  if (n < 2) return false;
+  if (isHit(digits[n - 1], c)) return false;
+  let run = 0;
+  let i = n - 2;
+  while (i >= 0 && isHit(digits[i], c)) {
+    run++;
+    i--;
+  }
+  return run === length && i >= 0;
+}
