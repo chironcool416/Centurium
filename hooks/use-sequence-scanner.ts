@@ -69,10 +69,18 @@ interface Params {
   symbols: ActiveSymbol[];
   symbolCodes: string[];
   enabled: boolean;
+  /** Called synchronously for every genuinely new live tick (never for the
+   *  history load), with the market's digit buffer already including the new
+   *  digit as its last entry. The array is the live buffer: read it, don't
+   *  keep or mutate it. Used by the MM bot for tick-accurate detection
+   *  instead of the 500ms-throttled `streams` snapshot. */
+  onTick?: (symbol: string, digits: readonly number[]) => void;
 }
 
-export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enabled }: Params) {
+export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enabled, onTick }: Params) {
   const [streams, setStreams] = useState<Record<string, SequenceStream>>({});
+  const onTickRef = useRef(onTick);
+  onTickRef.current = onTick;
 
   const stateRef = useRef<Record<string, StreamState>>({});
   const unsubRef = useRef<Record<string, () => void>>({});
@@ -164,6 +172,7 @@ export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enab
             s.lastTickAt = Date.now();
             s.status = 'live';
             dirtyRef.current = true;
+            onTickRef.current?.(symbol, s.digits);
           });
 
           if (!isCurrent()) {
