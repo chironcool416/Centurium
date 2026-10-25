@@ -24,7 +24,7 @@ import { VictoryDialog } from '@/components/custom/victory-dialog';
 import { DefeatDialog } from '@/components/custom/defeat-dialog';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
-import { computeDigitStats, getLastDigit } from '@/lib/digit-stats';
+import { computeDigitStats, getLastDigit, pipSizeFromPip } from '@/lib/digit-stats';
 import { useAutoBot, type BotPhase } from '@/hooks/use-auto-bot';
 import { useRaBot, type RaPhase, type RaTradingMode, type RaDetectionSide, type RaLogEntry } from '@/hooks/use-ra-bot';
 import {
@@ -2661,6 +2661,20 @@ export function TradeRobotView({
                     <span className={entry.won ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
                       {entry.won ? localize('Win') : localize('Loss')}
                     </span>
+                    {entry.exitSpot !== null && (() => {
+                      // Exit price at the market's own decimals, with the last
+                      // digit (the one the contract is settled on) highlighted.
+                      const meta = symbols.find((sym) => sym.underlying_symbol === entry.symbol);
+                      const text = entry.exitSpot.toFixed(meta ? pipSizeFromPip(meta.pip_size) : pipSize);
+                      return (
+                        <span className="tabular-nums font-mono font-semibold text-foreground">
+                          {text.slice(0, -1)}
+                          <span className={entry.won ? 'font-extrabold text-emerald-400' : 'font-extrabold text-rose-400'}>
+                            {text.slice(-1)}
+                          </span>
+                        </span>
+                      );
+                    })()}
                     <span className={cn('tabular-nums font-bold', entry.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
                       {entry.profit >= 0 ? '+' : ''}
                       {entry.profit.toFixed(2)}
