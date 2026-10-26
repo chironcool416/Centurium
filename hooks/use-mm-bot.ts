@@ -25,7 +25,7 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * first switches the panel's active market to the signalling one and will not
  * buy until the quote it holds is for that market.
  *
- * Loss lock: after a loss, the bot stays on the market that lost. Signals from
+ * Loss lock (when `stayOnMarket` is on): after a loss, the bot stays on the market that lost. Signals from
  * every other market are skipped, and the next trade (with the martingale
  * stake) only happens on a fresh signal from that same market, until a win
  * releases the lock and all markets are watched again. The market cooldown
@@ -77,6 +77,8 @@ export interface MmBotConfig {
   maxStake: number;
   /** Ticks a market sits out after the bot traded it. 0 = off. */
   cooldownTicks: number;
+  /** After a loss, only trade the market that lost until a win. Off = any market. */
+  stayOnMarket: boolean;
 }
 
 export interface MmLogEntry {
@@ -440,7 +442,7 @@ export function useMmBot({
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
     setLossStreak(lossStreakRef.current);
     // A loss pins the bot to that market; a win frees it.
-    const nextLock = won ? null : (trade?.symbol ?? lockedSymbolRef.current);
+    const nextLock = won || !cfg?.stayOnMarket ? null : (trade?.symbol ?? lockedSymbolRef.current);
     lockedSymbolRef.current = nextLock;
     setLockedSymbol(nextLock);
 
