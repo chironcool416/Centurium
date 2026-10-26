@@ -191,6 +191,7 @@ interface SavedRobotSettings {
   mmStopLoss: string;
   mmMaxStake: string;
   mmCooldown: string;
+  mmStayOnMarket: boolean;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -947,6 +948,7 @@ export function TradeRobotView({
   const [mmStopLoss, setMmStopLoss] = useState('0');
   const [mmMaxStake, setMmMaxStake] = useState('0');
   const [mmCooldown, setMmCooldown] = useState('0');
+  const [mmStayOnMarket, setMmStayOnMarket] = useState(true);
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
@@ -994,6 +996,7 @@ export function TradeRobotView({
       if (typeof saved.mmStopLoss === 'string') setMmStopLoss(saved.mmStopLoss);
       if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
       if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
+      if (typeof saved.mmStayOnMarket === 'boolean') setMmStayOnMarket(saved.mmStayOnMarket);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
@@ -1037,6 +1040,7 @@ export function TradeRobotView({
         mmStopLoss,
         mmMaxStake,
         mmCooldown,
+        mmStayOnMarket,
       };
       window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
       toast.success(localize('Settings saved'));
@@ -1305,6 +1309,7 @@ export function TradeRobotView({
       stopLoss: parseFloat(mmStopLoss) || 0,
       maxStake: parseFloat(mmMaxStake) || 0,
       cooldownTicks: Math.max(0, parseInt(mmCooldown, 10) || 0),
+      stayOnMarket: mmStayOnMarket,
     });
     toast.info(localize('Robot started'), {
       description: localize('Watching the Multi-market panel for the chosen run length.'),
@@ -2281,8 +2286,24 @@ export function TradeRobotView({
               <Input value={mmCooldown} onChange={(e) => setMmCooldown(e.target.value)} labelRight={localize('ticks')} />
             </div>
           </div>
+          <label className="flex cursor-pointer items-start gap-2 px-0.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+              checked={mmStayOnMarket}
+              onChange={(e) => setMmStayOnMarket(e.target.checked)}
+            />
+            <span className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Stay on the same market after a loss" />
+              <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                {mmStayOnMarket
+                  ? localize('On: after a loss, only that market can trade until a win; other markets\' signals are skipped.')
+                  : localize('Off: after a loss, a signal from any watched market can take the next trade.')}
+              </span>
+            </span>
+          </label>
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
-            <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. After a loss MM stays on the market that lost — signals from other markets are skipped and the next (martingale) trade waits for a fresh signal on that same market — until a win returns it to the base stake and all markets. Take Profit, Stop Loss and Max Stake stop MM outright." />
+            <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. A loss raises the stake per the martingale settings; a win returns to the base stake. Take Profit, Stop Loss and Max Stake stop MM outright." />
           </p>
 
           {(mmBot.running || mmBot.signalCount > 0) && (
