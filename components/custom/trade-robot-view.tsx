@@ -37,6 +37,7 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
 import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
 import { MultiMarketSequences } from '@/components/custom/multi-market-sequences';
+import { RobotPresets, type RobotPreset } from '@/components/custom/robot-presets';
 import {
   useMmBot,
   type MmPhase,
@@ -950,99 +951,106 @@ export function TradeRobotView({
   const [mmCooldown, setMmCooldown] = useState('0');
   const [mmStayOnMarket, setMmStayOnMarket] = useState(true);
 
+  // Apply a (possibly partial) set of saved settings to the panel. Shared by
+  // the on-mount reload, and loading a named preset.
+  const applySettings = (saved: Partial<SavedRobotSettings>) => {
+    if (typeof saved.multiplier === 'string') setMultiplier(saved.multiplier);
+    if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
+    if (typeof saved.initialAmount === 'string') setInitialAmount(saved.initialAmount);
+    if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
+    if (typeof saved.stopLossLosses === 'string') setStopLossLosses(saved.stopLossLosses);
+    if (typeof saved.duration === 'number') setDuration(saved.duration);
+    if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
+    if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
+    if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
+    if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
+    if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
+    if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
+    if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
+    if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
+    if (typeof saved.differStreakLength === 'string') setDifferStreakLength(saved.differStreakLength);
+    if (typeof saved.differPatternGap === 'string') setDifferPatternGap(saved.differPatternGap);
+    if (typeof saved.differTradeType === 'string') setDifferTradeType(saved.differTradeType);
+    if (typeof saved.differInitialStake === 'string') setDifferInitialStake(saved.differInitialStake);
+    if (typeof saved.differStakeMultiplier === 'string') setDifferStakeMultiplier(saved.differStakeMultiplier);
+    if (typeof saved.differMartingaleAfterLosses === 'string')
+      setDifferMartingaleAfterLosses(saved.differMartingaleAfterLosses);
+    if (typeof saved.differTakeProfit === 'string') setDifferTakeProfit(saved.differTakeProfit);
+    if (typeof saved.differStopLoss === 'string') setDifferStopLoss(saved.differStopLoss);
+    if (
+      typeof saved.mmCondition === 'string' &&
+      SEQUENCE_CONDITIONS.some((c) => conditionKey(c) === saved.mmCondition)
+    )
+      setMmCondition(saved.mmCondition);
+    if (typeof saved.mmLength === 'string') setMmLength(saved.mmLength);
+    if (saved.mmMode === 'trend' || saved.mmMode === 'counter') setMmMode(saved.mmMode);
+    if (typeof saved.mmCounterKind === 'string') setMmCounterKind(saved.mmCounterKind);
+    if (typeof saved.mmCounterDigit === 'string') setMmCounterDigit(saved.mmCounterDigit);
+    if (typeof saved.mmInitialStake === 'string') setMmInitialStake(saved.mmInitialStake);
+    if (typeof saved.mmStakeMultiplier === 'string') setMmStakeMultiplier(saved.mmStakeMultiplier);
+    if (typeof saved.mmMartingaleAfterLosses === 'string')
+      setMmMartingaleAfterLosses(saved.mmMartingaleAfterLosses);
+    if (typeof saved.mmTakeProfit === 'string') setMmTakeProfit(saved.mmTakeProfit);
+    if (typeof saved.mmStopLoss === 'string') setMmStopLoss(saved.mmStopLoss);
+    if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
+    if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
+    if (typeof saved.mmStayOnMarket === 'boolean') setMmStayOnMarket(saved.mmStayOnMarket);
+  };
+
   // Load any saved robot settings once on mount.
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
       if (!raw) return;
-      const saved = JSON.parse(raw) as Partial<SavedRobotSettings>;
-      if (typeof saved.multiplier === 'string') setMultiplier(saved.multiplier);
-      if (typeof saved.martingaleAfterLosses === 'string') setMartingaleAfterLosses(saved.martingaleAfterLosses);
-      if (typeof saved.initialAmount === 'string') setInitialAmount(saved.initialAmount);
-      if (typeof saved.targetProfit === 'string') setTargetProfit(saved.targetProfit);
-      if (typeof saved.stopLossLosses === 'string') setStopLossLosses(saved.stopLossLosses);
-      if (typeof saved.duration === 'number') setDuration(saved.duration);
-      if (typeof saved.raStreakCount === 'string') setRaStreakCount(saved.raStreakCount);
-      if (typeof saved.raConfirmationStreak === 'string') setRaConfirmationStreak(saved.raConfirmationStreak);
-      if (typeof saved.raInitialStake === 'string') setRaInitialStake(saved.raInitialStake);
-      if (typeof saved.raStakeMultiplier === 'string') setRaStakeMultiplier(saved.raStakeMultiplier);
-      if (typeof saved.raMartingaleAfterLosses === 'string') setRaMartingaleAfterLosses(saved.raMartingaleAfterLosses);
-      if (typeof saved.raTradingMode === 'string') setRaTradingMode(saved.raTradingMode);
-      if (typeof saved.raTakeProfit === 'string') setRaTakeProfit(saved.raTakeProfit);
-      if (typeof saved.raStopLoss === 'string') setRaStopLoss(saved.raStopLoss);
-      if (typeof saved.differStreakLength === 'string') setDifferStreakLength(saved.differStreakLength);
-      if (typeof saved.differPatternGap === 'string') setDifferPatternGap(saved.differPatternGap);
-      if (typeof saved.differTradeType === 'string') setDifferTradeType(saved.differTradeType);
-      if (typeof saved.differInitialStake === 'string') setDifferInitialStake(saved.differInitialStake);
-      if (typeof saved.differStakeMultiplier === 'string') setDifferStakeMultiplier(saved.differStakeMultiplier);
-      if (typeof saved.differMartingaleAfterLosses === 'string')
-        setDifferMartingaleAfterLosses(saved.differMartingaleAfterLosses);
-      if (typeof saved.differTakeProfit === 'string') setDifferTakeProfit(saved.differTakeProfit);
-      if (typeof saved.differStopLoss === 'string') setDifferStopLoss(saved.differStopLoss);
-      if (
-        typeof saved.mmCondition === 'string' &&
-        SEQUENCE_CONDITIONS.some((c) => conditionKey(c) === saved.mmCondition)
-      )
-        setMmCondition(saved.mmCondition);
-      if (typeof saved.mmLength === 'string') setMmLength(saved.mmLength);
-      if (saved.mmMode === 'trend' || saved.mmMode === 'counter') setMmMode(saved.mmMode);
-      if (typeof saved.mmCounterKind === 'string') setMmCounterKind(saved.mmCounterKind);
-      if (typeof saved.mmCounterDigit === 'string') setMmCounterDigit(saved.mmCounterDigit);
-      if (typeof saved.mmInitialStake === 'string') setMmInitialStake(saved.mmInitialStake);
-      if (typeof saved.mmStakeMultiplier === 'string') setMmStakeMultiplier(saved.mmStakeMultiplier);
-      if (typeof saved.mmMartingaleAfterLosses === 'string')
-        setMmMartingaleAfterLosses(saved.mmMartingaleAfterLosses);
-      if (typeof saved.mmTakeProfit === 'string') setMmTakeProfit(saved.mmTakeProfit);
-      if (typeof saved.mmStopLoss === 'string') setMmStopLoss(saved.mmStopLoss);
-      if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
-      if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
-      if (typeof saved.mmStayOnMarket === 'boolean') setMmStayOnMarket(saved.mmStayOnMarket);
+      applySettings(JSON.parse(raw) as Partial<SavedRobotSettings>);
     } catch {
       // Ignore malformed/unavailable storage — fields just keep their defaults.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Snapshot of every robot setting as it is right now.
+  const collectSettings = (): SavedRobotSettings => ({
+    multiplier,
+    martingaleAfterLosses,
+    initialAmount,
+    targetProfit,
+    stopLossLosses,
+    duration,
+    raStreakCount,
+    raConfirmationStreak,
+    raInitialStake,
+    raStakeMultiplier,
+    raMartingaleAfterLosses,
+    raTradingMode,
+    raTakeProfit,
+    raStopLoss,
+    differStreakLength,
+    differPatternGap,
+    differTradeType,
+    differInitialStake,
+    differStakeMultiplier,
+    differMartingaleAfterLosses,
+    differTakeProfit,
+    differStopLoss,
+    mmCondition,
+    mmLength,
+    mmMode,
+    mmCounterKind,
+    mmCounterDigit,
+    mmInitialStake,
+    mmStakeMultiplier,
+    mmMartingaleAfterLosses,
+    mmTakeProfit,
+    mmStopLoss,
+    mmMaxStake,
+    mmCooldown,
+    mmStayOnMarket,
+  });
+
   const handleSaveSettings = () => {
     try {
-      const payload: SavedRobotSettings = {
-        multiplier,
-        martingaleAfterLosses,
-        initialAmount,
-        targetProfit,
-        stopLossLosses,
-        duration,
-        raStreakCount,
-        raConfirmationStreak,
-        raInitialStake,
-        raStakeMultiplier,
-        raMartingaleAfterLosses,
-        raTradingMode,
-        raTakeProfit,
-        raStopLoss,
-        differStreakLength,
-        differPatternGap,
-        differTradeType,
-        differInitialStake,
-        differStakeMultiplier,
-        differMartingaleAfterLosses,
-        differTakeProfit,
-        differStopLoss,
-        mmCondition,
-        mmLength,
-        mmMode,
-        mmCounterKind,
-        mmCounterDigit,
-        mmInitialStake,
-        mmStakeMultiplier,
-        mmMartingaleAfterLosses,
-        mmTakeProfit,
-        mmStopLoss,
-        mmMaxStake,
-        mmCooldown,
-        mmStayOnMarket,
-      };
-      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
       toast.success(localize('Settings saved'));
     } catch {
       toast.error(localize('Could not save settings on this device.'));
@@ -2340,13 +2348,21 @@ export function TradeRobotView({
           )}
           </fieldset>
 
-          <Button
-            className="w-full"
-            variant="outline"
-            onClick={handleSaveSettings}
-          >
-            <Localize i18n_default_text="Save settings" />
-          </Button>
+          <div className="flex gap-2">
+            <Button className="flex-1" variant="outline" onClick={handleSaveSettings}>
+              <Localize i18n_default_text="Save settings" />
+            </Button>
+            <RobotPresets<SavedRobotSettings>
+              botMode={botMode}
+              collect={collectSettings}
+              loadDisabled={activeBotRunning}
+              onLoad={(preset: RobotPreset<SavedRobotSettings>) => {
+                applySettings(preset.settings);
+                setBotMode(preset.botMode);
+                toast.success(localize('Preset loaded'), { description: preset.name });
+              }}
+            />
+          </div>
 
           <Button
             className="w-full"
