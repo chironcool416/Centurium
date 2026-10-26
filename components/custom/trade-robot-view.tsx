@@ -43,6 +43,7 @@ import {
   type MmPhase,
   type MmMode,
   type MmCounterKind,
+  type MmRecoveryMode,
   type MmStopReason,
   type MmLogEntry,
 } from '@/hooks/use-mm-bot';
@@ -193,6 +194,7 @@ interface SavedRobotSettings {
   mmMaxStake: string;
   mmCooldown: string;
   mmStayOnMarket: boolean;
+  mmRecoveryMode: MmRecoveryMode;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -950,6 +952,7 @@ export function TradeRobotView({
   const [mmMaxStake, setMmMaxStake] = useState('0');
   const [mmCooldown, setMmCooldown] = useState('0');
   const [mmStayOnMarket, setMmStayOnMarket] = useState(true);
+  const [mmRecoveryMode, setMmRecoveryMode] = useState<MmRecoveryMode>('continuous');
 
   // Apply a (possibly partial) set of saved settings to the panel. Shared by
   // the on-mount reload, and loading a named preset.
@@ -995,6 +998,8 @@ export function TradeRobotView({
     if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
     if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
     if (typeof saved.mmStayOnMarket === 'boolean') setMmStayOnMarket(saved.mmStayOnMarket);
+    if (saved.mmRecoveryMode === 'burst' || saved.mmRecoveryMode === 'continuous')
+      setMmRecoveryMode(saved.mmRecoveryMode);
   };
 
   // Load any saved robot settings once on mount.
@@ -1046,6 +1051,7 @@ export function TradeRobotView({
     mmMaxStake,
     mmCooldown,
     mmStayOnMarket,
+    mmRecoveryMode,
   });
 
   const handleSaveSettings = () => {
@@ -1318,6 +1324,7 @@ export function TradeRobotView({
       maxStake: parseFloat(mmMaxStake) || 0,
       cooldownTicks: Math.max(0, parseInt(mmCooldown, 10) || 0),
       stayOnMarket: mmStayOnMarket,
+      recoveryMode: mmRecoveryMode,
     });
     toast.info(localize('Robot started'), {
       description: localize('Watching the Multi-market panel for the chosen run length.'),
@@ -2310,6 +2317,33 @@ export function TradeRobotView({
               </span>
             </span>
           </label>
+          {mmStayOnMarket && (
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label className="text-xs font-semibold text-foreground/90">
+                <Localize i18n_default_text="After a loss" />
+              </Label>
+              <ToggleGroup
+                type="single"
+                value={mmRecoveryMode}
+                onValueChange={(v) => {
+                  if (v) setMmRecoveryMode(v as MmRecoveryMode);
+                }}
+                className="w-full gap-0 rounded-full bg-muted p-1"
+              >
+                <ToggleGroupItem value="burst" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                  <Localize i18n_default_text="Burst" />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="continuous" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                  <Localize i18n_default_text="Continuous" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <p className="text-[11px] text-muted-foreground">
+                {mmRecoveryMode === 'burst'
+                  ? localize('Burst: re-fires straight away on that market (martingale stake) until a win, then waits for a fresh signal.')
+                  : localize('Continuous: waits for the next fresh signal on that market before each martingale trade, until a win.')}
+              </p>
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground px-0.5 -mt-1">
             <Localize i18n_default_text="One trade at a time: a signal that arrives while a trade is running is counted but skipped. A loss raises the stake per the martingale settings; a win returns to the base stake. Take Profit, Stop Loss and Max Stake stop MM outright." />
           </p>
@@ -2682,7 +2716,7 @@ export function TradeRobotView({
                     </span>
                     <span className="font-semibold text-foreground">{getSymbolDisplayName(entry.symbol)}</span>
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-muted text-foreground/80">
-                      {localize('Run of')} {entry.runLength}
+                      {entry.refire ? localize('Re-fire') : `${localize('Run of')} ${entry.runLength}`}
                     </span>
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-primary/15 text-primary">
                       {localize('Traded')} {entry.tradeLabel}
