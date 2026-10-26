@@ -30,6 +30,9 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * stake) only happens on a fresh signal from that same market, until a win
  * releases the lock and all markets are watched again. The market cooldown
  * does not apply to the locked market, so recovery isn't delayed by it.
+ * While locked, `recoveryMode` decides what triggers the next trade:
+ * 'burst' re-fires at once on that market until a win (like Differ's burst),
+ * 'continuous' waits for the next fresh signal on it.
  *
  * Money handling mirrors the Differ bot: martingale multiplier applied after
  * `martingaleStartAfter` consecutive losses, whole-run Take Profit / Stop
@@ -46,6 +49,13 @@ export interface MmCounterTrade {
   /** Barrier / digit. Ignored for even/odd. Over: 0-8, Under: 1-9, Matches/Differs: 0-9. */
   digit: number;
 }
+
+/** What happens after a loss while locked to a market (see `stayOnMarket`):
+ *  'burst'      — re-fire immediately on that market (martingale stake) until
+ *                 a win; a win then waits for a fresh signal on any market.
+ *  'continuous' — wait for the next fresh signal on that same market before
+ *                 each martingale trade. */
+export type MmRecoveryMode = 'burst' | 'continuous';
 
 export type MmStopReason =
   | 'manual'
@@ -79,6 +89,8 @@ export interface MmBotConfig {
   cooldownTicks: number;
   /** After a loss, only trade the market that lost until a win. Off = any market. */
   stayOnMarket: boolean;
+  /** How recovery trades are triggered while locked. Ignored when `stayOnMarket` is off. */
+  recoveryMode: MmRecoveryMode;
 }
 
 export interface MmLogEntry {
@@ -92,6 +104,8 @@ export interface MmLogEntry {
   won: boolean;
   stake: number;
   profit: number;
+  /** True for a Burst re-fire (no new signal behind it). */
+  refire: boolean;
 }
 
 export interface MmSignal {
@@ -165,6 +179,7 @@ interface ActiveTrade {
   digit: number;
   label: string;
   stake: number;
+  refire: boolean;
 }
 
 export function useMmBot({
@@ -298,6 +313,60 @@ export function useMmBot({
   );
 
   /**
+   * Point the trade panel at `symbol` and start one trade there: stake from the
+   * current loss streak, contract from the configured mode. `refire` marks a
+   * Burst re-fire (not caused by a new signal). Returns false if it stopped the
+   * bot instead (Max Stake / insufficient funds).
+   */
+  const fireTrade = useCallback(
+    (symbol: string, runLength: number, refire: boolean): boolean => {
+      const cfg = cfgRef.current;
+      if (!cfg) return false;
+      const trade = resolveMmTrade(cfg);
+      const stakeAmount = mmStakeFor(cfg, lossStreakRef.current);
+      if (cfg.maxStake > 0 && stakeAmount > cfg.maxStake + 0.001) {
+        stop('max-stake');
+        return false;
+      }
+      const bal = balanceRef.current;
+      if (bal !== null && stakeAmount > bal + 0.001) {
+        stop('insufficient-funds');
+        return false;
+      }
+
+      if (!refire) recordSignal(symbol, runLength, 'traded', trade.label);
+
+      const fireKey = `${symbol}:${trade.contractMode}:${trade.digit}:${stakeAmount.toFixed(2)}`;
+      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
+      lastFireKeyRef.current = fireKey;
+
+      activeTradeRef.current = {
+        symbol,
+        runLength,
+        contractMode: trade.contractMode,
+        digit: trade.digit,
+        label: trade.label,
+        stake: stakeAmount,
+        refire,
+      };
+      setCurrentTrade({ symbol, label: trade.label });
+
+      // Point the trade panel at the signalling market and the chosen contract.
+      const api = apiRef.current;
+      api.selectSymbol(symbol);
+      api.setStake(stakeAmount.toFixed(2));
+      api.setContractMode(trade.contractMode);
+      if (trade.contractMode !== 'DIGITEVEN' && trade.contractMode !== 'DIGITODD') {
+        api.setSelectedDigit(trade.digit);
+      }
+      sawProposalLoadingRef.current = false;
+      setPhaseSync('awaiting-proposal');
+      return true;
+    },
+    [recordSignal, setPhaseSync, stop]
+  );
+
+  /**
    * Fed by the scanner for every new live tick of every watched market.
    * Detects "a run of exactly N just ended on this market".
    */
@@ -331,46 +400,9 @@ export function useMmBot({
         return;
       }
 
-      const stakeAmount = mmStakeFor(cfg, lossStreakRef.current);
-      if (cfg.maxStake > 0 && stakeAmount > cfg.maxStake + 0.001) {
-        stop('max-stake');
-        return;
-      }
-      const bal = balanceRef.current;
-      if (bal !== null && stakeAmount > bal + 0.001) {
-        stop('insufficient-funds');
-        return;
-      }
-
-      recordSignal(symbol, run, 'traded', trade.label);
-
-      const fireKey = `${symbol}:${trade.contractMode}:${trade.digit}:${stakeAmount.toFixed(2)}`;
-      skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
-      lastFireKeyRef.current = fireKey;
-
-      activeTradeRef.current = {
-        symbol,
-        runLength: run,
-        contractMode: trade.contractMode,
-        digit: trade.digit,
-        label: trade.label,
-        stake: stakeAmount,
-      };
-      setCurrentTrade({ symbol, label: trade.label });
-
-      // Point the trade panel at the signalling market and the chosen contract.
-      const api = apiRef.current;
-      api.selectSymbol(symbol);
-      api.setStake(stakeAmount.toFixed(2));
-      api.setContractMode(trade.contractMode);
-      if (trade.contractMode !== 'DIGITEVEN' && trade.contractMode !== 'DIGITODD') {
-        api.setSelectedDigit(trade.digit);
-      }
-
-      sawProposalLoadingRef.current = false;
-      setPhaseSync('awaiting-proposal');
+      fireTrade(symbol, run, false);
     },
-    [recordSignal, setPhaseSync, stop]
+    [recordSignal, fireTrade]
   );
 
   // --- Buy once a quote for the right market / stake is ready.
@@ -435,6 +467,7 @@ export function useMmBot({
         won,
         stake: trade.stake,
         profit,
+        refire: trade.refire,
       });
       if (cfg && cfg.cooldownTicks > 0) cooldownRef.current[trade.symbol] = cfg.cooldownTicks;
     }
@@ -473,8 +506,14 @@ export function useMmBot({
         }
       }
     }
+    // Burst: after a loss, go again straight away on the market that lost,
+    // with no new signal needed, until a win clears the lock.
+    if (!won && cfg && cfg.stayOnMarket && cfg.recoveryMode === 'burst' && nextLock) {
+      fireTrade(nextLock, trade?.runLength ?? cfg.sequenceLength, true);
+      return;
+    }
     setPhaseSync('idle');
-  }, [phase, openPositions, pushLog, stop, setPhaseSync]);
+  }, [phase, openPositions, pushLog, stop, setPhaseSync, fireTrade]);
 
   usePhaseWatchdog(enabled, phase, (stuckPhase) => stop(timeoutReason(stuckPhase)));
 
