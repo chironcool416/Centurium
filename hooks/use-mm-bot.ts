@@ -117,6 +117,29 @@ export interface MmSignal {
   tradeLabel: string;
 }
 
+/** Where on a market's tick tape a trade was placed. */
+export interface MmTradeMark {
+  contractId: number;
+  symbol: string;
+  /** Epoch of the newest tick on that market when the buy was confirmed. */
+  epoch: number;
+  status: 'pending' | 'won' | 'lost';
+  label: string;
+  stake: number;
+  time: number;
+  refire: boolean;
+}
+
+/** Last ticks of one market, oldest → newest, epochs aligned to digits. */
+export interface MmTapeEntry {
+  digits: number[];
+  epochs: number[];
+}
+
+/** How many ticks the tick record shows (3 rows of 10). */
+export const MM_TAPE_TICKS = 30;
+const MAX_TRADE_MARKS = 60;
+
 interface ResolvedTrade {
   contractMode: ContractMode;
   digit: number;
@@ -203,6 +226,10 @@ export function useMmBot({
   const [stoppedReason, setStoppedReason] = useState<MmStopReason>(null);
   const [log, setLog] = useState<MmLogEntry[]>([]);
   const [lastSignal, setLastSignal] = useState<MmSignal | null>(null);
+  const [tradeMarks, setTradeMarks] = useState<MmTradeMark[]>([]);
+  // Last ticks of every watched market, frozen the moment the bot stops so they
+  // can be inspected afterwards (e.g. after a Stop Loss).
+  const [frozenTape, setFrozenTape] = useState<Record<string, MmTapeEntry> | null>(null);
   const [signalCount, setSignalCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
   const [currentTrade, setCurrentTrade] = useState<{ symbol: string; label: string } | null>(null);
@@ -217,6 +244,9 @@ export function useMmBot({
   const pnlRef = useRef(0);
   const lossStreakRef = useRef(0);
   const lockedSymbolRef = useRef<string | null>(null);
+  // Live per-market tick buffers as last seen by handleTick (references to the
+  // scanner's arrays, which it mutates in place).
+  const bufRef = useRef<Record<string, { digits: readonly number[]; epochs: readonly number[] }>>({});
   const activeTradeRef = useRef<ActiveTrade | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   const cooldownRef = useRef<Record<string, number>>({});
@@ -254,6 +284,9 @@ export function useMmBot({
       lossStreakRef.current = 0;
       lockedSymbolRef.current = null;
       setLockedSymbol(null);
+      bufRef.current = {};
+      setTradeMarks([]);
+      setFrozenTape(null);
       activeTradeRef.current = null;
       pendingContractIdRef.current = null;
       cooldownRef.current = {};
@@ -284,6 +317,15 @@ export function useMmBot({
       setEnabled(false);
       lockedSymbolRef.current = null;
       setLockedSymbol(null);
+      // Keep the last ticks of every watched market for after-the-fact review.
+      const frozen: Record<string, MmTapeEntry> = {};
+      for (const [sym, buf] of Object.entries(bufRef.current)) {
+        frozen[sym] = {
+          digits: buf.digits.slice(-MM_TAPE_TICKS),
+          epochs: buf.epochs.slice(-MM_TAPE_TICKS),
+        };
+      }
+      setFrozenTape(Object.keys(frozen).length > 0 ? frozen : null);
       setStoppedReason(reason);
       setPhaseSync('idle');
       pendingContractIdRef.current = null;
@@ -371,10 +413,11 @@ export function useMmBot({
    * Detects "a run of exactly N just ended on this market".
    */
   const handleTick = useCallback(
-    (symbol: string, digits: readonly number[]) => {
+    (symbol: string, digits: readonly number[], epochs: readonly number[]) => {
       if (!enabledRef.current) return;
       const cfg = cfgRef.current;
       if (!cfg) return;
+      bufRef.current[symbol] = { digits, epochs };
 
       const cd = cooldownRef.current[symbol] ?? 0;
       if (cd > 0) cooldownRef.current[symbol] = cd - 1;
@@ -429,6 +472,24 @@ export function useMmBot({
     if (phase !== 'awaiting-buy') return;
     if (buyResult) {
       pendingContractIdRef.current = buyResult.contractId;
+      // Pin this trade to the newest tick on its market, so the tick record
+      // can show exactly where the bot started trading.
+      const placed = activeTradeRef.current;
+      const buf = placed ? bufRef.current[placed.symbol] : undefined;
+      const markEpoch = buf && buf.epochs.length > 0 ? buf.epochs[buf.epochs.length - 1] : null;
+      if (placed && markEpoch !== null) {
+        const mark: MmTradeMark = {
+          contractId: buyResult.contractId,
+          symbol: placed.symbol,
+          epoch: markEpoch,
+          status: 'pending',
+          label: placed.label,
+          stake: placed.stake,
+          time: Date.now(),
+          refire: placed.refire,
+        };
+        setTradeMarks((prev) => [...prev.slice(-(MAX_TRADE_MARKS - 1)), mark]);
+      }
       clearBuyResult();
       setPhaseSync('awaiting-settlement');
     } else if (buyError) {
@@ -449,7 +510,11 @@ export function useMmBot({
 
     const profit = parseFloat(pos.profit);
     const won = profit > 0;
+    const settledId = pendingContractIdRef.current;
     pendingContractIdRef.current = null;
+    setTradeMarks((prev) =>
+      prev.map((m) => (m.contractId === settledId ? { ...m, status: won ? 'won' : 'lost' } : m))
+    );
 
     const lastStreamTick =
       pos.tick_stream && pos.tick_stream.length > 0 ? pos.tick_stream[pos.tick_stream.length - 1] : null;
@@ -530,6 +595,8 @@ export function useMmBot({
     currentTrade,
     lossStreak,
     lockedSymbol,
+    tradeMarks,
+    frozenTape,
     sessionDurationMs,
     start,
     stop,
