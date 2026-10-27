@@ -49,7 +49,13 @@ export interface SequenceStream {
   status: SequenceStreamStatus;
   /** Last digits, oldest → newest, at most WINDOW_TICKS long. */
   digits: number[];
+  /** Epoch (seconds) of the most recent ticks, aligned to the END of `digits`
+   *  (last element ↔ last digit). Only the newest RECENT_EPOCHS are kept. */
+  recentEpochs: number[];
 }
+
+/** How many trailing tick epochs each published stream carries. */
+export const RECENT_EPOCHS = 60;
 
 const STALE_MS = 8_000;
 const WATCHDOG_INTERVAL_MS = 2_000;
@@ -58,6 +64,8 @@ const PUBLISH_INTERVAL_MS = 500;
 interface StreamState {
   pipSize: number;
   digits: number[];
+  /** Epoch of every digit in `digits` (same length, same order). */
+  epochs: number[];
   lastEpoch: number;
   lastTickAt: number;
   status: SequenceStreamStatus;
@@ -74,7 +82,7 @@ interface Params {
    *  digit as its last entry. The array is the live buffer: read it, don't
    *  keep or mutate it. Used by the MM bot for tick-accurate detection
    *  instead of the 500ms-throttled `streams` snapshot. */
-  onTick?: (symbol: string, digits: readonly number[]) => void;
+  onTick?: (symbol: string, digits: readonly number[], epochs: readonly number[]) => void;
 }
 
 export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enabled, onTick }: Params) {
@@ -97,7 +105,11 @@ export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enab
   const publish = useCallback(() => {
     const next: Record<string, SequenceStream> = {};
     for (const [symbol, st] of Object.entries(stateRef.current)) {
-      next[symbol] = { status: st.status, digits: st.digits.slice() };
+      next[symbol] = {
+        status: st.status,
+        digits: st.digits.slice(),
+        recentEpochs: st.epochs.slice(-RECENT_EPOCHS),
+      };
     }
     setStreams(next);
   }, []);
@@ -125,6 +137,7 @@ export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enab
       stateRef.current[symbol] = {
         pipSize: meta ? pipSizeFromPip(meta.pip_size) : (previous?.pipSize ?? 2),
         digits: previous?.digits ?? [],
+        epochs: previous?.epochs ?? [],
         lastEpoch: previous?.lastEpoch ?? 0,
         lastTickAt: Date.now(),
         status: 'connecting',
@@ -149,6 +162,7 @@ export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enab
           const prices = history.history?.prices ?? [];
           const times = history.history?.times ?? [];
           st.digits = prices.map((p) => getLastDigit(p, st.pipSize));
+          st.epochs = times.length === prices.length ? times.slice() : [];
           st.lastEpoch = times.length > 0 ? times[times.length - 1] : 0;
           st.status = 'live';
           st.lastTickAt = Date.now();
@@ -167,12 +181,14 @@ export function useSequenceScanner({ ws, isConnected, symbols, symbolCodes, enab
             }
             if (tick.pip_size) s.pipSize = tick.pip_size;
             s.digits.push(getLastDigit(tick.quote, s.pipSize));
+            s.epochs.push(tick.epoch);
             if (s.digits.length > WINDOW_TICKS) s.digits.splice(0, s.digits.length - WINDOW_TICKS);
+            if (s.epochs.length > WINDOW_TICKS) s.epochs.splice(0, s.epochs.length - WINDOW_TICKS);
             s.lastEpoch = tick.epoch;
             s.lastTickAt = Date.now();
             s.status = 'live';
             dirtyRef.current = true;
-            onTickRef.current?.(symbol, s.digits);
+            onTickRef.current?.(symbol, s.digits, s.epochs);
           });
 
           if (!isCurrent()) {
