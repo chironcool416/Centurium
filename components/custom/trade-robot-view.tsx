@@ -196,6 +196,7 @@ interface SavedRobotSettings {
   mmCooldown: string;
   mmStayOnMarket: boolean;
   mmRecoveryMode: MmRecoveryMode;
+  mmRecoveryTarget: string;
 }
 
 // Same spring used for the equivalent glide animation on the standalone
@@ -954,6 +955,7 @@ export function TradeRobotView({
   const [mmCooldown, setMmCooldown] = useState('0');
   const [mmStayOnMarket, setMmStayOnMarket] = useState(true);
   const [mmRecoveryMode, setMmRecoveryMode] = useState<MmRecoveryMode>('continuous');
+  const [mmRecoveryTarget, setMmRecoveryTarget] = useState('2');
 
   // Apply a (possibly partial) set of saved settings to the panel. Shared by
   // the on-mount reload, and loading a named preset.
@@ -999,8 +1001,13 @@ export function TradeRobotView({
     if (typeof saved.mmMaxStake === 'string') setMmMaxStake(saved.mmMaxStake);
     if (typeof saved.mmCooldown === 'string') setMmCooldown(saved.mmCooldown);
     if (typeof saved.mmStayOnMarket === 'boolean') setMmStayOnMarket(saved.mmStayOnMarket);
-    if (saved.mmRecoveryMode === 'burst' || saved.mmRecoveryMode === 'continuous')
+    if (
+      saved.mmRecoveryMode === 'burst' ||
+      saved.mmRecoveryMode === 'continuous' ||
+      saved.mmRecoveryMode === 'target'
+    )
       setMmRecoveryMode(saved.mmRecoveryMode);
+    if (typeof saved.mmRecoveryTarget === 'string') setMmRecoveryTarget(saved.mmRecoveryTarget);
   };
 
   // Load any saved robot settings once on mount.
@@ -1053,6 +1060,7 @@ export function TradeRobotView({
     mmCooldown,
     mmStayOnMarket,
     mmRecoveryMode,
+    mmRecoveryTarget,
   });
 
   const handleSaveSettings = () => {
@@ -1312,6 +1320,10 @@ export function TradeRobotView({
         return;
       }
     }
+    if (mmStayOnMarket && mmRecoveryMode === 'target' && !(parseFloat(mmRecoveryTarget) > 0)) {
+      toast.error(localize('Enter a profit target above 0 for the Target recovery.'));
+      return;
+    }
     mmBot.start({
       condition: parseConditionKey(mmCondition),
       sequenceLength,
@@ -1326,6 +1338,7 @@ export function TradeRobotView({
       cooldownTicks: Math.max(0, parseInt(mmCooldown, 10) || 0),
       stayOnMarket: mmStayOnMarket,
       recoveryMode: mmRecoveryMode,
+      recoveryTarget: parseFloat(mmRecoveryTarget) || 0,
     });
     toast.info(localize('Robot started'), {
       description: localize('Watching the Multi-market panel for the chosen run length.'),
@@ -2337,11 +2350,27 @@ export function TradeRobotView({
                 <ToggleGroupItem value="continuous" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
                   <Localize i18n_default_text="Continuous" />
                 </ToggleGroupItem>
+                <ToggleGroupItem value="target" className="flex-1 rounded-full text-xs font-semibold text-foreground/70 data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:font-bold data-[state=on]:shadow-sm hover:text-foreground">
+                  <Localize i18n_default_text="Target" />
+                </ToggleGroupItem>
               </ToggleGroup>
+              {mmRecoveryMode === 'target' && (
+                <div className="space-y-1.5 pt-1">
+                  <Label
+                    className="text-xs font-semibold text-foreground/90"
+                    title={localize('Net profit to make on that market, counted from the loss that started the recovery, before MM goes back to watching all markets.')}
+                  >
+                    <Localize i18n_default_text="Profit target" />
+                  </Label>
+                  <Input value={mmRecoveryTarget} onChange={(e) => setMmRecoveryTarget(e.target.value)} labelRight="USD" />
+                </div>
+              )}
               <p className="text-[11px] text-muted-foreground">
                 {mmRecoveryMode === 'burst'
                   ? localize('Burst: re-fires straight away on that market (martingale stake) until a win, then waits for a fresh signal.')
-                  : localize('Continuous: waits for the next fresh signal on that market before each martingale trade, until a win.')}
+                  : mmRecoveryMode === 'target'
+                    ? localize('Target: keeps re-firing on that market, wins included (back to the base stake after a win), until the net profit since the first loss reaches the target, then waits for a fresh signal.')
+                    : localize('Continuous: waits for the next fresh signal on that market before each martingale trade, until a win.')}
               </p>
             </div>
           )}
