@@ -32,7 +32,9 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * does not apply to the locked market, so recovery isn't delayed by it.
  * While locked, `recoveryMode` decides what triggers the next trade:
  * 'burst' re-fires at once on that market until a win (like Differ's burst),
- * 'continuous' waits for the next fresh signal on it.
+ * 'continuous' waits for the next fresh signal on it, and 'target' keeps
+ * re-firing on that market (wins included) until the profit since the first
+ * loss of the cycle reaches `recoveryTarget` USD.
  *
  * Money handling mirrors the Differ bot: martingale multiplier applied after
  * `martingaleStartAfter` consecutive losses, whole-run Take Profit / Stop
@@ -54,8 +56,13 @@ export interface MmCounterTrade {
  *  'burst'      — re-fire immediately on that market (martingale stake) until
  *                 a win; a win then waits for a fresh signal on any market.
  *  'continuous' — wait for the next fresh signal on that same market before
- *                 each martingale trade. */
-export type MmRecoveryMode = 'burst' | 'continuous';
+ *                 each martingale trade.
+ *  'target'     — re-fire immediately on that market after every trade (loss
+ *                 or win) until the net profit of the recovery cycle,
+ *                 counted from the first losing trade, reaches
+ *                 `recoveryTarget` USD. Wins below the target go back to the
+ *                 base stake and keep firing. */
+export type MmRecoveryMode = 'burst' | 'continuous' | 'target';
 
 export type MmStopReason =
   | 'manual'
@@ -91,6 +98,9 @@ export interface MmBotConfig {
   stayOnMarket: boolean;
   /** How recovery trades are triggered while locked. Ignored when `stayOnMarket` is off. */
   recoveryMode: MmRecoveryMode;
+  /** 'target' mode only: net USD to make over the recovery cycle (counted from
+   *  the first loss that started it) before the lock is released. */
+  recoveryTarget: number;
 }
 
 export interface MmLogEntry {
@@ -244,6 +254,9 @@ export function useMmBot({
   const pnlRef = useRef(0);
   const lossStreakRef = useRef(0);
   const lockedSymbolRef = useRef<string | null>(null);
+  // Total P/L just before the loss that started the current recovery cycle
+  // ('target' mode measures its goal from here).
+  const cycleStartPnlRef = useRef(0);
   // Live per-market tick buffers as last seen by handleTick (references to the
   // scanner's arrays, which it mutates in place).
   const bufRef = useRef<Record<string, { digits: readonly number[]; epochs: readonly number[] }>>({});
@@ -283,6 +296,7 @@ export function useMmBot({
       pnlRef.current = 0;
       lossStreakRef.current = 0;
       lockedSymbolRef.current = null;
+      cycleStartPnlRef.current = 0;
       setLockedSymbol(null);
       bufRef.current = {};
       setTradeMarks([]);
@@ -539,12 +553,25 @@ export function useMmBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
     setLossStreak(lossStreakRef.current);
-    // A loss pins the bot to that market; a win frees it.
-    const nextLock = won || !cfg?.stayOnMarket ? null : (trade?.symbol ?? lockedSymbolRef.current);
+    const nextPnl = pnlRef.current + profit;
+    // A loss pins the bot to that market; a win frees it. In 'target' mode a
+    // win only frees it once the cycle (counted from the first loss) has made
+    // the target amount.
+    const wasLocked = lockedSymbolRef.current !== null;
+    let nextLock: string | null;
+    if (!cfg?.stayOnMarket) {
+      nextLock = null;
+    } else if (cfg.recoveryMode === 'target') {
+      if (!won && !wasLocked) cycleStartPnlRef.current = pnlRef.current;
+      const cycleActive = !won || wasLocked;
+      const reached = nextPnl - cycleStartPnlRef.current >= cfg.recoveryTarget - 0.001;
+      nextLock = cycleActive && !reached ? (trade?.symbol ?? lockedSymbolRef.current) : null;
+    } else {
+      nextLock = won ? null : (trade?.symbol ?? lockedSymbolRef.current);
+    }
     lockedSymbolRef.current = nextLock;
     setLockedSymbol(nextLock);
 
-    const nextPnl = pnlRef.current + profit;
     pnlRef.current = nextPnl;
     setPnl(nextPnl);
 
@@ -573,7 +600,13 @@ export function useMmBot({
     }
     // Burst: after a loss, go again straight away on the market that lost,
     // with no new signal needed, until a win clears the lock.
-    if (!won && cfg && cfg.stayOnMarket && cfg.recoveryMode === 'burst' && nextLock) {
+    // Target: same, but also after wins that haven't yet reached the target.
+    if (
+      cfg &&
+      cfg.stayOnMarket &&
+      nextLock &&
+      ((cfg.recoveryMode === 'burst' && !won) || cfg.recoveryMode === 'target')
+    ) {
       fireTrade(nextLock, trade?.runLength ?? cfg.sequenceLength, true);
       return;
     }
