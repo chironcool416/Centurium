@@ -38,6 +38,7 @@ import { useDigitAlerts, type DigitAlertFire } from '@/hooks/use-digit-alerts';
 import { DigitAlertsPanel } from '@/components/custom/digit-alerts-panel';
 import { MultiMarketSequences } from '@/components/custom/multi-market-sequences';
 import { RobotPresets, type RobotPreset } from '@/components/custom/robot-presets';
+import { MmTickRecord } from '@/components/custom/mm-tick-record';
 import {
   useMmBot,
   type MmPhase,
@@ -2381,6 +2382,18 @@ export function TradeRobotView({
           </>
           )}
           </fieldset>
+
+          {botMode === 'mm' && (
+            <MmTickRecord
+              streams={seqScanner.streams}
+              frozen={mmBot.frozenTape}
+              running={mmBot.running}
+              marks={mmBot.tradeMarks}
+              watchedCodes={seqPanel.activeCodes}
+              currentTradeSymbol={mmBot.currentTrade?.symbol ?? null}
+              lastSignalSymbol={mmBot.lastSignal?.symbol ?? null}
+            />
+          )}
 
           <div className="flex gap-2">
             <Button className="flex-1" variant="outline" onClick={handleSaveSettings}>
