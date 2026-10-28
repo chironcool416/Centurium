@@ -33,8 +33,9 @@ interface Props {
 /**
  * The last 30 ticks of one market as a 3×10 grid: oldest at the top-left,
  * newest at the bottom-right, so there is nothing to scroll sideways. Ticks
- * where the robot placed a trade are coloured (amber while open, green won,
- * red lost); every other tick keeps the plain colour. After the robot stops
+ * the robot traded are coloured: amber while the trade is open, then green
+ * (won) or red (lost) on the exit tick whose digit decided it; every other
+ * tick keeps the plain colour. After the robot stops
  * the grid freezes, so the ticks leading into a Stop Loss can be reviewed.
  */
 export function MmTickRecord({
