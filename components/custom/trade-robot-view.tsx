@@ -46,6 +46,7 @@ import {
   type MmCounterKind,
   type MmRecoveryMode,
   type MmTargetTrigger,
+  oppositeCondition,
   type MmStopReason,
   type MmLogEntry,
 } from '@/hooks/use-mm-bot';
@@ -184,6 +185,7 @@ interface SavedRobotSettings {
   differTakeProfit: string;
   differStopLoss: string;
   mmCondition: string;
+  mmWatchOpposite: boolean;
   mmLength: string;
   mmMode: MmMode;
   mmCounterKind: MmCounterKind;
@@ -944,6 +946,7 @@ export function TradeRobotView({
   // a condition (e.g. Over 5) ends on any market ticked in the Multi-market
   // panel. Own stake/martingale state, separate from every other mode.
   const [mmCondition, setMmCondition] = useState(conditionKey({ side: 'over', barrier: 5 }));
+  const [mmWatchOpposite, setMmWatchOpposite] = useState(false);
   const [mmLength, setMmLength] = useState('3');
   const [mmMode, setMmMode] = useState<MmMode>('trend');
   const [mmCounterKind, setMmCounterKind] = useState<MmCounterKind>('under');
@@ -992,6 +995,7 @@ export function TradeRobotView({
     )
       setMmCondition(saved.mmCondition);
     if (typeof saved.mmLength === 'string') setMmLength(saved.mmLength);
+    if (typeof saved.mmWatchOpposite === 'boolean') setMmWatchOpposite(saved.mmWatchOpposite);
     if (saved.mmMode === 'trend' || saved.mmMode === 'counter') setMmMode(saved.mmMode);
     if (typeof saved.mmCounterKind === 'string') setMmCounterKind(saved.mmCounterKind);
     if (typeof saved.mmCounterDigit === 'string') setMmCounterDigit(saved.mmCounterDigit);
@@ -1052,6 +1056,7 @@ export function TradeRobotView({
     differTakeProfit,
     differStopLoss,
     mmCondition,
+    mmWatchOpposite,
     mmLength,
     mmMode,
     mmCounterKind,
@@ -1332,6 +1337,7 @@ export function TradeRobotView({
     }
     mmBot.start({
       condition: parseConditionKey(mmCondition),
+      watchOpposite: mmWatchOpposite,
       sequenceLength,
       mode: mmMode,
       counterTrade: { kind: mmCounterKind, digit: isNaN(counterDigit) ? 0 : counterDigit },
@@ -2164,11 +2170,39 @@ export function TradeRobotView({
               </Select>
             </div>
           </div>
+          <label className="flex cursor-pointer items-start gap-2 px-1.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+              checked={mmWatchOpposite}
+              onChange={(e) => setMmWatchOpposite(e.target.checked)}
+            />
+            <span className="text-xs font-semibold text-foreground/90">
+              <Localize i18n_default_text="Watch the opposite too" />
+              <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                {mmWatchOpposite
+                  ? localize('On: also watches {{opp}} (the mirror of {{label}}, digits d → 9-d) and trades the mirrored contract on its signals.', {
+                      opp: conditionLabel(oppositeCondition(parseConditionKey(mmCondition))),
+                      label: conditionLabel(parseConditionKey(mmCondition)),
+                    })
+                  : localize('Off: only the watched digit above can signal.')}
+              </span>
+            </span>
+          </label>
           <p className="text-[11px] text-muted-foreground px-1.5">
-            {localize(
-              'Fires when a run of {{label}} ends after exactly {{n}} ticks on any watched market — i.e. that length\'s bar in the chart goes up by one.',
-              { label: conditionLabel(parseConditionKey(mmCondition)), n: mmLength }
-            )}
+            {mmWatchOpposite
+              ? localize(
+                  'Fires when a run of {{label}} or {{opp}} ends after exactly {{n}} ticks on any watched market.',
+                  {
+                    label: conditionLabel(parseConditionKey(mmCondition)),
+                    opp: conditionLabel(oppositeCondition(parseConditionKey(mmCondition))),
+                    n: mmLength,
+                  }
+                )
+              : localize(
+                  'Fires when a run of {{label}} ends after exactly {{n}} ticks on any watched market — i.e. that length\'s bar in the chart goes up by one.',
+                  { label: conditionLabel(parseConditionKey(mmCondition)), n: mmLength }
+                )}
           </p>
 
           <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
@@ -2195,7 +2229,9 @@ export function TradeRobotView({
                 ? localize('Trend trades the watched digit itself: {{label}}, on the market that signalled.', {
                     label: conditionLabel(parseConditionKey(mmCondition)),
                   })
-                : localize('Counter trades exactly the contract you choose below, on the market that signalled.')}
+                : mmWatchOpposite
+                  ? localize('Counter trades the contract you choose below on the watched digit\'s signal, and its mirror (Under 5 → Over 4, Even → Odd) on the opposite\'s signal.')
+                  : localize('Counter trades exactly the contract you choose below, on the market that signalled.')}
             </p>
           </div>
 
