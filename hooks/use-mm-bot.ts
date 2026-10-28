@@ -168,7 +168,9 @@ export interface MmSignal {
 export interface MmTradeMark {
   contractId: number;
   symbol: string;
-  /** Epoch of the newest tick on that market when the buy was confirmed. */
+  /** Epoch of the tick the mark sits on. While the trade is open this is the
+   *  newest tick when the buy was confirmed; once it settles it moves to the
+   *  exit tick — the tick whose digit actually decided win or loss. */
   epoch: number;
   status: 'pending' | 'won' | 'lost';
   label: string;
@@ -575,8 +577,20 @@ export function useMmBot({
     const won = profit > 0;
     const settledId = pendingContractIdRef.current;
     pendingContractIdRef.current = null;
+    // Colour the tick that decided the trade (its exit tick), not the tick that
+    // happened to be newest when the buy was confirmed.
+    const streamLast =
+      pos.tick_stream && pos.tick_stream.length > 0 ? pos.tick_stream[pos.tick_stream.length - 1] : null;
+    const exitEpoch =
+      typeof pos.exit_spot_time === 'number' && pos.exit_spot_time > 0
+        ? pos.exit_spot_time
+        : (streamLast?.epoch ?? null);
     setTradeMarks((prev) =>
-      prev.map((m) => (m.contractId === settledId ? { ...m, status: won ? 'won' : 'lost' } : m))
+      prev.map((m) =>
+        m.contractId === settledId
+          ? { ...m, status: won ? 'won' : 'lost', epoch: exitEpoch ?? m.epoch }
+          : m
+      )
     );
 
     const lastStreamTick =
