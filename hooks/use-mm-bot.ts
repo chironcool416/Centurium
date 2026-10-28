@@ -64,6 +64,12 @@ export interface MmCounterTrade {
  *                 base stake and keep firing. */
 export type MmRecoveryMode = 'burst' | 'continuous' | 'target';
 
+/** 'target' mode only — what starts a target cycle:
+ *  'loss'   — only a losing trade; a win from a fresh signal just ends there.
+ *  'always' — every signal trade; the bot keeps re-firing on that market
+ *             until the target is made, whatever the first trade did. */
+export type MmTargetTrigger = 'loss' | 'always';
+
 export type MmStopReason =
   | 'manual'
   | 'take-profit'
@@ -101,6 +107,8 @@ export interface MmBotConfig {
   /** 'target' mode only: net USD to make over the recovery cycle (counted from
    *  the first loss that started it) before the lock is released. */
   recoveryTarget: number;
+  /** 'target' mode only: start the cycle on a loss, or on every signal trade. */
+  recoveryTrigger: MmTargetTrigger;
 }
 
 export interface MmLogEntry {
@@ -562,8 +570,9 @@ export function useMmBot({
     if (!cfg?.stayOnMarket) {
       nextLock = null;
     } else if (cfg.recoveryMode === 'target') {
-      if (!won && !wasLocked) cycleStartPnlRef.current = pnlRef.current;
-      const cycleActive = !won || wasLocked;
+      const startsOnAny = cfg.recoveryTrigger === 'always';
+      if (!wasLocked && (startsOnAny || !won)) cycleStartPnlRef.current = pnlRef.current;
+      const cycleActive = wasLocked || startsOnAny || !won;
       const reached = nextPnl - cycleStartPnlRef.current >= cfg.recoveryTarget - 0.001;
       nextLock = cycleActive && !reached ? (trade?.symbol ?? lockedSymbolRef.current) : null;
     } else {
