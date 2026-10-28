@@ -14,6 +14,12 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * — i.e. that length's bar in the Multi-market sequence chart just went up by
  * one. Runs shorter or longer than that length do nothing.
  *
+ * Watch opposite (optional): the mirrored condition is watched too — digits
+ * mirror as d → 9-d, so Over 5 ↔ Under 4, Over 4 ↔ Under 5, Over 7 ↔ Under 2.
+ * A run of the mirrored condition with the same exact length is a signal as
+ * well, and the trade is mirrored the same way (Counter Under 5 ↔ Over 4,
+ * Even ↔ Odd, Matches/Differs d ↔ 9-d).
+ *
  * Action, on the market that signalled:
  *  - Trend:   trade the condition itself (Over 5 → Over 5).
  *  - Counter: trade whatever the user picked explicitly (`counterTrade`) —
@@ -52,6 +58,27 @@ export interface MmCounterTrade {
   digit: number;
 }
 
+/** Mirror of a watched condition: digits map d → 9-d (Over 5 ↔ Under 4). */
+export function oppositeCondition(c: SequenceCondition): SequenceCondition {
+  return { side: c.side === 'over' ? 'under' : 'over', barrier: 9 - c.barrier };
+}
+
+/** Mirror of a counter trade under the same d → 9-d mapping (Under 5 ↔ Over 4, Even ↔ Odd). */
+export function oppositeCounterTrade(t: MmCounterTrade): MmCounterTrade {
+  switch (t.kind) {
+    case 'over':
+      return { kind: 'under', digit: 9 - t.digit };
+    case 'under':
+      return { kind: 'over', digit: 9 - t.digit };
+    case 'even':
+      return { kind: 'odd', digit: 0 };
+    case 'odd':
+      return { kind: 'even', digit: 0 };
+    default:
+      return { kind: t.kind, digit: 9 - t.digit };
+  }
+}
+
 /** What happens after a loss while locked to a market (see `stayOnMarket`):
  *  'burst'      — re-fire immediately on that market (martingale stake) until
  *                 a win; a win then waits for a fresh signal on any market.
@@ -83,6 +110,8 @@ export type MmPhase = 'idle' | 'awaiting-proposal' | 'awaiting-buy' | 'awaiting-
 export interface MmBotConfig {
   /** The digit condition whose runs are watched, e.g. Over 5. */
   condition: SequenceCondition;
+  /** Also watch the mirrored condition (Over 5 ↔ Under 4) and trade the mirrored contract on its signals. */
+  watchOpposite: boolean;
   /** Exact run length that triggers a signal (2-10). */
   sequenceLength: number;
   mode: MmMode;
@@ -164,16 +193,16 @@ interface ResolvedTrade {
   label: string;
 }
 
-export function resolveMmTrade(cfg: MmBotConfig): ResolvedTrade {
+export function resolveMmTrade(cfg: MmBotConfig, opposite = false): ResolvedTrade {
   if (cfg.mode === 'trend') {
-    const { side, barrier } = cfg.condition;
+    const cond = opposite ? oppositeCondition(cfg.condition) : cfg.condition;
     return {
-      contractMode: side === 'over' ? 'DIGITOVER' : 'DIGITUNDER',
-      digit: barrier,
-      label: conditionLabel(cfg.condition),
+      contractMode: cond.side === 'over' ? 'DIGITOVER' : 'DIGITUNDER',
+      digit: cond.barrier,
+      label: conditionLabel(cond),
     };
   }
-  const { kind, digit } = cfg.counterTrade;
+  const { kind, digit } = opposite ? oppositeCounterTrade(cfg.counterTrade) : cfg.counterTrade;
   switch (kind) {
     case 'over':
       return { contractMode: 'DIGITOVER', digit, label: `Over ${digit}` };
@@ -221,6 +250,8 @@ interface ActiveTrade {
   label: string;
   stake: number;
   refire: boolean;
+  /** Came from the mirrored watch; re-fires keep the same side. */
+  opposite: boolean;
 }
 
 export function useMmBot({
@@ -383,10 +414,10 @@ export function useMmBot({
    * bot instead (Max Stake / insufficient funds).
    */
   const fireTrade = useCallback(
-    (symbol: string, runLength: number, refire: boolean): boolean => {
+    (symbol: string, runLength: number, refire: boolean, opposite = false): boolean => {
       const cfg = cfgRef.current;
       if (!cfg) return false;
-      const trade = resolveMmTrade(cfg);
+      const trade = resolveMmTrade(cfg, opposite);
       const stakeAmount = mmStakeFor(cfg, lossStreakRef.current);
       if (cfg.maxStake > 0 && stakeAmount > cfg.maxStake + 0.001) {
         stop('max-stake');
@@ -412,6 +443,7 @@ export function useMmBot({
         label: trade.label,
         stake: stakeAmount,
         refire,
+        opposite,
       };
       setCurrentTrade({ symbol, label: trade.label });
 
@@ -444,11 +476,20 @@ export function useMmBot({
       const cd = cooldownRef.current[symbol] ?? 0;
       if (cd > 0) cooldownRef.current[symbol] = cd - 1;
 
-      // Did a run of exactly the watched length just end on this tick?
-      if (!runJustEndedAt(digits, cfg.condition, cfg.sequenceLength)) return;
+      // Did a run of exactly the watched length just end on this tick? The
+      // main and mirrored conditions use disjoint digits, so at most one fires.
+      let opposite = false;
+      if (!runJustEndedAt(digits, cfg.condition, cfg.sequenceLength)) {
+        if (
+          !cfg.watchOpposite ||
+          !runJustEndedAt(digits, oppositeCondition(cfg.condition), cfg.sequenceLength)
+        )
+          return;
+        opposite = true;
+      }
       const run = cfg.sequenceLength;
 
-      const trade = resolveMmTrade(cfg);
+      const trade = resolveMmTrade(cfg, opposite);
 
       // Recovering from a loss: only the market that lost may trade.
       const locked = lockedSymbolRef.current;
@@ -465,7 +506,7 @@ export function useMmBot({
         return;
       }
 
-      fireTrade(symbol, run, false);
+      fireTrade(symbol, run, false, opposite);
     },
     [recordSignal, fireTrade]
   );
@@ -616,7 +657,7 @@ export function useMmBot({
       nextLock &&
       ((cfg.recoveryMode === 'burst' && !won) || cfg.recoveryMode === 'target')
     ) {
-      fireTrade(nextLock, trade?.runLength ?? cfg.sequenceLength, true);
+      fireTrade(nextLock, trade?.runLength ?? cfg.sequenceLength, true, trade?.opposite ?? false);
       return;
     }
     setPhaseSync('idle');
