@@ -22,6 +22,8 @@ import { TradeControls, getContractModeOptions } from '@/components/trade-contro
 import { PositionsTable } from '@/components/custom/positions-table';
 import { VictoryDialog } from '@/components/custom/victory-dialog';
 import { DefeatDialog } from '@/components/custom/defeat-dialog';
+import { MmVictoryDialog } from '@/components/custom/mm-victory-dialog';
+import { MmDefeatDialog } from '@/components/custom/mm-defeat-dialog';
 import { cn } from '@/lib/utils';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import { computeDigitStats, getLastDigit, pipSizeFromPip } from '@/lib/digit-stats';
@@ -1229,6 +1231,15 @@ export function TradeRobotView({
     }
   }, [bot.phase]);
 
+  // MM bot take-profit / stop-loss popups (with the run's win / loss tally).
+  // `stoppedReason` is cleared on every Start, so each run re-triggers these.
+  const [mmVictoryOpen, setMmVictoryOpen] = useState(false);
+  const [mmDefeatOpen, setMmDefeatOpen] = useState(false);
+  useEffect(() => {
+    if (mmBot.stoppedReason === 'take-profit') setMmVictoryOpen(true);
+    if (mmBot.stoppedReason === 'stop-loss') setMmDefeatOpen(true);
+  }, [mmBot.stoppedReason]);
+
   const handleRaStart = () => {
     if (raBot.running) {
       raBot.stop('manual');
@@ -1416,6 +1427,24 @@ export function TradeRobotView({
       open={defeatOpen}
       onOpenChange={setDefeatOpen}
       onContinue={() => setDefeatOpen(false)}
+    />
+    <MmVictoryDialog
+      open={mmVictoryOpen}
+      onOpenChange={setMmVictoryOpen}
+      onContinue={() => setMmVictoryOpen(false)}
+      wins={mmBot.winCount}
+      losses={mmBot.lossCount}
+      pnl={mmBot.pnl}
+      durationMs={mmBot.sessionDurationMs}
+    />
+    <MmDefeatDialog
+      open={mmDefeatOpen}
+      onOpenChange={setMmDefeatOpen}
+      onContinue={() => setMmDefeatOpen(false)}
+      wins={mmBot.winCount}
+      losses={mmBot.lossCount}
+      pnl={mmBot.pnl}
+      durationMs={mmBot.sessionDurationMs}
     />
     <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
