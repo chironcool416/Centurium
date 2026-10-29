@@ -285,6 +285,9 @@ export function useMmBot({
   const [skippedCount, setSkippedCount] = useState(0);
   const [currentTrade, setCurrentTrade] = useState<{ symbol: string; label: string } | null>(null);
   const [lossStreak, setLossStreak] = useState(0);
+  // Whole-run trade tally (the log only keeps the last 50 trades, so these are counted separately).
+  const [winCount, setWinCount] = useState(0);
+  const [lossCount, setLossCount] = useState(0);
   // Market the bot is recovering on after a loss; null when free to take any market.
   const [lockedSymbol, setLockedSymbol] = useState<string | null>(null);
   const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
@@ -351,6 +354,8 @@ export function useMmBot({
       signalIdRef.current = 0;
       setPnl(0);
       setLossStreak(0);
+      setWinCount(0);
+      setLossCount(0);
       setLog([]);
       setLastSignal(null);
       setSignalCount(0);
@@ -616,6 +621,8 @@ export function useMmBot({
 
     lossStreakRef.current = won ? 0 : lossStreakRef.current + 1;
     setLossStreak(lossStreakRef.current);
+    if (won) setWinCount((n) => n + 1);
+    else setLossCount((n) => n + 1);
     const nextPnl = pnlRef.current + profit;
     // A loss pins the bot to that market; a win frees it. In 'target' mode a
     // win only frees it once the cycle (counted from the first loss) has made
@@ -691,6 +698,8 @@ export function useMmBot({
     skippedCount,
     currentTrade,
     lossStreak,
+    winCount,
+    lossCount,
     lockedSymbol,
     tradeMarks,
     frozenTape,
