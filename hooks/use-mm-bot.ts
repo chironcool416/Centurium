@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProposalInfo, BuyResult } from '@deriv/core';
 import type { ContractMode, OpenPosition } from '@/lib/types';
 import { usePhaseWatchdog, timeoutReason, type TimeoutReason } from '@/hooks/use-phase-watchdog';
-import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/digit-sequences';
+import {
+  runJustEndedAt,
+  conditionLabel,
+  isHit,
+  type SequenceCondition,
+} from '@/lib/digit-sequences';
 
 /**
  * "MM" (Multi-market) bot.
@@ -41,6 +46,17 @@ import { runJustEndedAt, conditionLabel, type SequenceCondition } from '@/lib/di
  * 'continuous' waits for the next fresh signal on it, and 'target' keeps
  * re-firing on that market (wins included) until the profit since the first
  * loss of the cycle reaches `recoveryTarget` USD.
+ *
+ * Confirmation streak (optional, 0-9): once a run of the exact length ends, the
+ * market is ARMED instead of trading at once. It then needs M consecutive
+ * digits of the same watched condition (the mirrored one for an opposite
+ * signal) on that market before the trade fires; any other digit resets the
+ * progress to 0 (strict, like Ra). 0 = no confirmation, trade immediately.
+ * The optional time limit (seconds, wall-clock) cancels an armed signal that
+ * has not been confirmed in time. Each market arms independently; a fresh
+ * signal on an already-armed market re-arms it (progress and timer restart).
+ * The busy / recovery-lock / cooldown checks are applied when the trade would
+ * actually fire.
  *
  * Money handling mirrors the Differ bot: martingale multiplier applied after
  * `martingaleStartAfter` consecutive losses, whole-run Take Profit / Stop
@@ -114,6 +130,12 @@ export interface MmBotConfig {
   watchOpposite: boolean;
   /** Exact run length that triggers a signal (2-10). */
   sequenceLength: number;
+  /** Extra consecutive digits of the watched condition required after the run
+   *  ends before the trade fires. 0-9. 0 = trade immediately. */
+  confirmationStreak: number;
+  /** Seconds an armed signal may wait for its confirmation streak before it is
+   *  cancelled. 0 or omitted = no time limit. */
+  confirmTimeLimitSeconds?: number;
   mode: MmMode;
   /** Only used in Counter mode. */
   counterTrade: MmCounterTrade;
@@ -160,7 +182,7 @@ export interface MmSignal {
   time: number;
   symbol: string;
   runLength: number;
-  action: 'traded' | 'busy' | 'cooldown' | 'locked';
+  action: 'traded' | 'busy' | 'cooldown' | 'locked' | 'expired';
   tradeLabel: string;
 }
 
@@ -183,6 +205,15 @@ export interface MmTradeMark {
 export interface MmTapeEntry {
   digits: number[];
   epochs: number[];
+}
+
+/** A market whose run just ended and is waiting for its confirmation streak. */
+export interface MmArmedMarket {
+  symbol: string;
+  /** Came from the mirrored watch. */
+  opposite: boolean;
+  progress: number;
+  needed: number;
 }
 
 /** How many ticks the tick record shows (3 rows of 10). */
@@ -291,6 +322,7 @@ export function useMmBot({
   // Market the bot is recovering on after a loss; null when free to take any market.
   const [lockedSymbol, setLockedSymbol] = useState<string | null>(null);
   const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
+  const [armedMarkets, setArmedMarkets] = useState<MmArmedMarket[]>([]);
 
   const cfgRef = useRef<MmBotConfig | null>(null);
   const enabledRef = useRef(false);
@@ -314,6 +346,19 @@ export function useMmBot({
   const sawProposalLoadingRef = useRef(false);
   const lastFireKeyRef = useRef<string | null>(null);
   const skipLoadingWaitRef = useRef(false);
+  // Markets waiting for their confirmation streak, with a wall-clock timer each
+  // for the time limit (a real setTimeout, like Ra: the limit is seconds, not ticks).
+  const armedRef = useRef<
+    Record<
+      string,
+      {
+        opposite: boolean;
+        runLength: number;
+        progress: number;
+        timer: ReturnType<typeof setTimeout> | null;
+      }
+    >
+  >({});
 
   // Latest versions of the trade-panel callbacks, read from `handleTick`
   // (which must stay referentially stable for the scanner).
@@ -323,6 +368,39 @@ export function useMmBot({
   useEffect(() => {
     balanceRef.current = balance;
   }, [balance]);
+
+  const syncArmed = useCallback(() => {
+    const needed = cfgRef.current?.confirmationStreak ?? 0;
+    setArmedMarkets(
+      Object.entries(armedRef.current).map(([symbol, a]) => ({
+        symbol,
+        opposite: a.opposite,
+        progress: a.progress,
+        needed,
+      }))
+    );
+  }, []);
+
+  const clearArmed = useCallback(
+    (symbol?: string) => {
+      const targets = symbol ? [symbol] : Object.keys(armedRef.current);
+      for (const sym of targets) {
+        const a = armedRef.current[sym];
+        if (a?.timer) clearTimeout(a.timer);
+        delete armedRef.current[sym];
+      }
+      syncArmed();
+    },
+    [syncArmed]
+  );
+
+  // Never leave a pending time-limit timeout behind on unmount.
+  useEffect(() => {
+    return () => {
+      for (const a of Object.values(armedRef.current)) if (a.timer) clearTimeout(a.timer);
+      armedRef.current = {};
+    };
+  }, []);
 
   const setPhaseSync = useCallback((next: MmPhase) => {
     phaseRef.current = next;
@@ -337,6 +415,7 @@ export function useMmBot({
   const start = useCallback(
     (cfg: MmBotConfig) => {
       cfgRef.current = cfg;
+      clearArmed();
       pnlRef.current = 0;
       lossStreakRef.current = 0;
       lockedSymbolRef.current = null;
@@ -368,13 +447,14 @@ export function useMmBot({
       enabledRef.current = true;
       setEnabled(true);
     },
-    [setPhaseSync]
+    [setPhaseSync, clearArmed]
   );
 
   const stop = useCallback(
     (reason: MmStopReason = 'manual') => {
       enabledRef.current = false;
       setEnabled(false);
+      clearArmed();
       lockedSymbolRef.current = null;
       setLockedSymbol(null);
       // Keep the last ticks of every watched market for after-the-fact review.
@@ -395,7 +475,7 @@ export function useMmBot({
         sessionStartRef.current !== null ? Date.now() - sessionStartRef.current : null
       );
     },
-    [setPhaseSync]
+    [setPhaseSync, clearArmed]
   );
 
   const recordSignal = useCallback(
@@ -470,32 +550,14 @@ export function useMmBot({
   );
 
   /**
-   * Fed by the scanner for every new live tick of every watched market.
-   * Detects "a run of exactly N just ended on this market".
+   * A signal is ready to trade (no confirmation needed, or its confirmation
+   * streak just completed): apply the busy / recovery-lock / cooldown checks,
+   * then fire.
    */
-  const handleTick = useCallback(
-    (symbol: string, digits: readonly number[], epochs: readonly number[]) => {
-      if (!enabledRef.current) return;
+  const tryFire = useCallback(
+    (symbol: string, run: number, opposite: boolean) => {
       const cfg = cfgRef.current;
       if (!cfg) return;
-      bufRef.current[symbol] = { digits, epochs };
-
-      const cd = cooldownRef.current[symbol] ?? 0;
-      if (cd > 0) cooldownRef.current[symbol] = cd - 1;
-
-      // Did a run of exactly the watched length just end on this tick? The
-      // main and mirrored conditions use disjoint digits, so at most one fires.
-      let opposite = false;
-      if (!runJustEndedAt(digits, cfg.condition, cfg.sequenceLength)) {
-        if (
-          !cfg.watchOpposite ||
-          !runJustEndedAt(digits, oppositeCondition(cfg.condition), cfg.sequenceLength)
-        )
-          return;
-        opposite = true;
-      }
-      const run = cfg.sequenceLength;
-
       const trade = resolveMmTrade(cfg, opposite);
 
       // Recovering from a loss: only the market that lost may trade.
@@ -516,6 +578,92 @@ export function useMmBot({
       fireTrade(symbol, run, false, opposite);
     },
     [recordSignal, fireTrade]
+  );
+
+  /**
+   * Fed by the scanner for every new live tick of every watched market.
+   * Detects "a run of exactly N just ended on this market", arms it when a
+   * confirmation streak is set, and advances the confirmation of an armed market.
+   */
+  const handleTick = useCallback(
+    (symbol: string, digits: readonly number[], epochs: readonly number[]) => {
+      if (!enabledRef.current) return;
+      const cfg = cfgRef.current;
+      if (!cfg) return;
+      bufRef.current[symbol] = { digits, epochs };
+
+      const cd = cooldownRef.current[symbol] ?? 0;
+      if (cd > 0) cooldownRef.current[symbol] = cd - 1;
+
+      // An armed market: this tick either extends its confirmation streak or
+      // resets it (strict, like Ra). A market armed on this very tick is not
+      // counted here — arming happens further down.
+      const armed = armedRef.current[symbol];
+      if (armed && digits.length > 0) {
+        const cond = armed.opposite ? oppositeCondition(cfg.condition) : cfg.condition;
+        armed.progress = isHit(digits[digits.length - 1], cond)
+          ? Math.min(armed.progress + 1, cfg.confirmationStreak)
+          : 0;
+        if (armed.progress >= cfg.confirmationStreak) {
+          const { runLength, opposite: armedOpposite } = armed;
+          clearArmed(symbol);
+          tryFire(symbol, runLength, armedOpposite);
+          if (!enabledRef.current) return;
+        } else {
+          syncArmed();
+        }
+      }
+
+      // Did a run of exactly the watched length just end on this tick? The
+      // main and mirrored conditions use disjoint digits, so at most one fires.
+      let opposite = false;
+      if (!runJustEndedAt(digits, cfg.condition, cfg.sequenceLength)) {
+        if (
+          !cfg.watchOpposite ||
+          !runJustEndedAt(digits, oppositeCondition(cfg.condition), cfg.sequenceLength)
+        )
+          return;
+        opposite = true;
+      }
+      const run = cfg.sequenceLength;
+
+      // No confirmation wanted: trade straight away.
+      if (cfg.confirmationStreak <= 0) {
+        tryFire(symbol, run, opposite);
+        return;
+      }
+
+      // Confirmation wanted: while recovering on another market this signal
+      // can never be traded, so don't bother arming it.
+      const trade = resolveMmTrade(cfg, opposite);
+      const locked = lockedSymbolRef.current;
+      if (locked !== null && symbol !== locked) {
+        recordSignal(symbol, run, 'locked', trade.label);
+        return;
+      }
+
+      // Arm (or re-arm: a fresh signal restarts progress and the timer).
+      clearArmed(symbol);
+      const entry: {
+        opposite: boolean;
+        runLength: number;
+        progress: number;
+        timer: ReturnType<typeof setTimeout> | null;
+      } = { opposite, runLength: run, progress: 0, timer: null };
+      const limit = cfg.confirmTimeLimitSeconds ?? 0;
+      if (limit > 0) {
+        entry.timer = setTimeout(() => {
+          // Only cancel if this very arm is still the pending one.
+          if (!enabledRef.current || armedRef.current[symbol] !== entry) return;
+          delete armedRef.current[symbol];
+          recordSignal(symbol, run, 'expired', trade.label);
+          syncArmed();
+        }, limit * 1000);
+      }
+      armedRef.current[symbol] = entry;
+      syncArmed();
+    },
+    [recordSignal, tryFire, clearArmed, syncArmed]
   );
 
   // --- Buy once a quote for the right market / stake is ready.
@@ -701,6 +849,7 @@ export function useMmBot({
     winCount,
     lossCount,
     lockedSymbol,
+    armedMarkets,
     tradeMarks,
     frozenTape,
     sessionDurationMs,
