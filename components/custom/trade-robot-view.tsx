@@ -1451,6 +1451,7 @@ export function TradeRobotView({
       losses={mmBot.lossCount}
       pnl={mmBot.pnl}
       durationMs={mmBot.sessionDurationMs}
+      info={mmBot.stopInfo}
     />
     <MmDefeatDialog
       open={mmDefeatOpen}
@@ -1460,6 +1461,7 @@ export function TradeRobotView({
       losses={mmBot.lossCount}
       pnl={mmBot.pnl}
       durationMs={mmBot.sessionDurationMs}
+      info={mmBot.stopInfo}
     />
     <div className="w-full max-w-[1760px] mx-auto px-3 py-4 sm:px-4 flex flex-col lg:flex-row gap-4">
       {/* Left: Automated Robot settings. Collapsible — expanded by default,
