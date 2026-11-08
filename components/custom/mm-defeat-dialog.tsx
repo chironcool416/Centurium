@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { brandDisplay } from '@/lib/fonts';
 import { formatSessionDuration } from '@/lib/duration-utils';
+import type { MmStopInfo } from '@/hooks/use-mm-bot';
 
 interface MmDefeatDialogProps {
   open: boolean;
@@ -24,6 +25,8 @@ interface MmDefeatDialogProps {
   pnl?: number | null;
   /** Wall-clock ms from bot start to this stop-loss hit, or null if unknown. */
   durationMs?: number | null;
+  /** Signal / trade behind this stop loss, or null if unknown. */
+  info?: MmStopInfo | null;
 }
 
 /**
@@ -39,6 +42,7 @@ export function MmDefeatDialog({
   losses,
   pnl = null,
   durationMs = null,
+  info = null,
 }: MmDefeatDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -86,6 +90,38 @@ export function MmDefeatDialog({
           {pnl !== null && (
             <div className="mt-3 text-sm font-semibold text-rose-100">
               <Localize i18n_default_text="Loss" />: {pnl >= 0 ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+            </div>
+          )}
+
+          {info && (
+            <div className="mt-4 w-full rounded-xl border border-rose-400/30 bg-rose-950/40 px-4 py-3 text-left text-sm text-rose-50/90">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-rose-200/80">
+                  <Localize i18n_default_text="Signal" />
+                </span>
+                <span className="font-semibold text-rose-100">
+                  {info.runLength} {info.signalLabel}s
+                  {' · '}
+                  {info.confirmation > 0 ? (
+                    <>{info.confirmation} <Localize i18n_default_text="confirmation" /></>
+                  ) : (
+                    <Localize i18n_default_text="no confirmation" />
+                  )}
+                </span>
+              </div>
+              <div className="mt-2 flex items-baseline justify-between gap-3">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-rose-200/80">
+                  <Localize i18n_default_text="Trade taken" />
+                </span>
+                <span className="font-semibold text-rose-100">
+                  {info.tradeLabel} · {info.symbol}
+                </span>
+              </div>
+              {info.refire && (
+                <div className="mt-2 text-xs text-rose-200/70">
+                  <Localize i18n_default_text="Final trade was a recovery re-fire." />
+                </div>
+              )}
             </div>
           )}
 
