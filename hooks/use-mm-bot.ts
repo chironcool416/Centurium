@@ -186,6 +186,22 @@ export interface MmSignal {
   tradeLabel: string;
 }
 
+/** The signal and trade behind the run's final take-profit / stop-loss, shown on the MM popup card. */
+export interface MmStopInfo {
+  /** Market the signal came from. */
+  symbol: string;
+  /** Watched condition that produced the signal, e.g. "Under 5" (already mirrored for an opposite signal). */
+  signalLabel: string;
+  /** Exact run length that triggered it. */
+  runLength: number;
+  /** Confirmation streak that was required (0 = traded immediately). */
+  confirmation: number;
+  /** What was bought, e.g. "Over 4". */
+  tradeLabel: string;
+  /** The final trade was a recovery re-fire, not a fresh signal. */
+  refire: boolean;
+}
+
 /** Where on a market's tick tape a trade was placed. */
 export interface MmTradeMark {
   contractId: number;
@@ -323,6 +339,7 @@ export function useMmBot({
   const [lockedSymbol, setLockedSymbol] = useState<string | null>(null);
   const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
   const [armedMarkets, setArmedMarkets] = useState<MmArmedMarket[]>([]);
+  const [stopInfo, setStopInfo] = useState<MmStopInfo | null>(null);
 
   const cfgRef = useRef<MmBotConfig | null>(null);
   const enabledRef = useRef(false);
@@ -337,6 +354,8 @@ export function useMmBot({
   // scanner's arrays, which it mutates in place).
   const bufRef = useRef<Record<string, { digits: readonly number[]; epochs: readonly number[] }>>({});
   const activeTradeRef = useRef<ActiveTrade | null>(null);
+  // Signal behind the trade cycle in progress (kept across Burst / Target re-fires).
+  const signalInfoRef = useRef<Omit<MmStopInfo, 'tradeLabel' | 'refire'> | null>(null);
   const pendingContractIdRef = useRef<number | null>(null);
   const cooldownRef = useRef<Record<string, number>>({});
   const logIdRef = useRef(0);
@@ -441,6 +460,8 @@ export function useMmBot({
       setSkippedCount(0);
       setCurrentTrade(null);
       setStoppedReason(null);
+      setStopInfo(null);
+      signalInfoRef.current = null;
       setSessionDurationMs(null);
       sessionStartRef.current = Date.now();
       setPhaseSync('idle');
@@ -516,7 +537,16 @@ export function useMmBot({
         return false;
       }
 
-      if (!refire) recordSignal(symbol, runLength, 'traded', trade.label);
+      if (!refire) {
+        recordSignal(symbol, runLength, 'traded', trade.label);
+        const sigCond = opposite ? oppositeCondition(cfg.condition) : cfg.condition;
+        signalInfoRef.current = {
+          symbol,
+          signalLabel: conditionLabel(sigCond),
+          runLength,
+          confirmation: cfg.confirmationStreak,
+        };
+      }
 
       const fireKey = `${symbol}:${trade.contractMode}:${trade.digit}:${stakeAmount.toFixed(2)}`;
       skipLoadingWaitRef.current = fireKey === lastFireKeyRef.current;
@@ -801,6 +831,19 @@ export function useMmBot({
       const hitTakeProfit = cfg.takeProfit > 0 && nextPnl >= cfg.takeProfit;
       const hitStopLoss = cfg.stopLoss > 0 && nextPnl <= -cfg.stopLoss;
       if (hitTakeProfit || hitStopLoss) {
+        const sig = signalInfoRef.current;
+        setStopInfo(
+          trade
+            ? {
+                symbol: sig?.symbol ?? trade.symbol,
+                signalLabel: sig?.signalLabel ?? '',
+                runLength: sig?.runLength ?? trade.runLength,
+                confirmation: sig?.confirmation ?? cfg.confirmationStreak,
+                tradeLabel: trade.label,
+                refire: trade.refire,
+              }
+            : null
+        );
         stop(hitTakeProfit ? 'take-profit' : 'stop-loss');
         return;
       }
@@ -853,6 +896,7 @@ export function useMmBot({
     tradeMarks,
     frozenTape,
     sessionDurationMs,
+    stopInfo,
     start,
     stop,
     handleTick,
