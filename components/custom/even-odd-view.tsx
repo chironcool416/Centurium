@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Localize } from '@deriv-com/translations';
+import { cloudSetItem, cloudRemoveItem } from '@/lib/cloud-sync';
+import { CLOUD_SYNC_EVENT } from '@/lib/cloud-sync-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -561,24 +563,30 @@ export function EvenOddView({
   });
 
   const persistProfiles = (next: EoSettingsProfilesMap) => {
-    window.localStorage.setItem(EO_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
+    cloudSetItem(EO_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
   };
 
   // Load any saved profiles once on mount, and re-apply the last one used.
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(EO_SETTINGS_PROFILES_STORAGE_KEY);
-      const map: EoSettingsProfilesMap = raw ? (JSON.parse(raw) as EoSettingsProfilesMap) : {};
-      setEoProfiles(map);
+    const load = () => {
+      try {
+        const raw = window.localStorage.getItem(EO_SETTINGS_PROFILES_STORAGE_KEY);
+        const map: EoSettingsProfilesMap = raw ? (JSON.parse(raw) as EoSettingsProfilesMap) : {};
+        setEoProfiles(map);
 
-      const lastActive = window.localStorage.getItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
-      if (lastActive && map[lastActive]) {
-        applySettings(map[lastActive].settings);
-        setActiveProfileName(lastActive);
+        const lastActive = window.localStorage.getItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+        if (lastActive && map[lastActive]) {
+          applySettings(map[lastActive].settings);
+          setActiveProfileName(lastActive);
+        }
+      } catch {
+        // Ignore malformed/unavailable storage — fields just keep their defaults.
       }
-    } catch {
-      // Ignore malformed/unavailable storage — fields just keep their defaults.
-    }
+    };
+    load();
+    // Profiles saved on another device arrive after sign-in.
+    window.addEventListener(CLOUD_SYNC_EVENT, load);
+    return () => window.removeEventListener(CLOUD_SYNC_EVENT, load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -591,7 +599,7 @@ export function EvenOddView({
       persistProfiles(next);
       setEoProfiles(next);
       setActiveProfileName(name);
-      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      cloudSetItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
       toast.success(localize('Saved profile "{{name}}"', { name }));
     } catch {
       toast.error(localize('Could not save settings on this device.'));
@@ -604,7 +612,7 @@ export function EvenOddView({
     applySettings(profile.settings);
     setActiveProfileName(name);
     try {
-      window.localStorage.setItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      cloudSetItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
     } catch {
       // Non-fatal — the settings are already applied in-memory either way.
     }
@@ -624,7 +632,7 @@ export function EvenOddView({
     if (activeProfileName === name) {
       setActiveProfileName(null);
       try {
-        window.localStorage.removeItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+        cloudRemoveItem(EO_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
       } catch {
         // Non-fatal.
       }
