@@ -136,6 +136,13 @@ export interface MmBotConfig {
   /** Seconds an armed signal may wait for its confirmation streak before it is
    *  cancelled. 0 or omitted = no time limit. */
   confirmTimeLimitSeconds?: number;
+  /** Second confirmation streak, required after the first one completes: extra
+   *  consecutive digits of the watched condition. 0-9. 0 = off. Only applies
+   *  when `confirmationStreak` > 0. */
+  confirmation2Streak?: number;
+  /** Seconds the second confirmation streak may take once it starts (the clock
+   *  starts when the first confirmation completes). 0 or omitted = no limit. */
+  confirm2TimeLimitSeconds?: number;
   mode: MmMode;
   /** Only used in Counter mode. */
   counterTrade: MmCounterTrade;
@@ -196,6 +203,8 @@ export interface MmStopInfo {
   runLength: number;
   /** Confirmation streak that was required (0 = traded immediately). */
   confirmation: number;
+  /** Second confirmation streak that was required (0 = none). */
+  confirmation2: number;
   /** What was bought, e.g. "Over 4". */
   tradeLabel: string;
   /** The final trade was a recovery re-fire, not a fresh signal. */
@@ -230,7 +239,10 @@ export interface MmArmedMarket {
   opposite: boolean;
   progress: number;
   needed: number;
-  /** Epochs of the ticks that made up the run (shown purple on the tick record). */
+  /** Which confirmation streak is being collected (1 or 2). */
+  stage: 1 | 2;
+  /** Epochs of the ticks that made up the run, plus the first confirmation
+   *  streak once it is done (shown purple on the tick record). */
   runEpochs: number[];
 }
 
@@ -249,6 +261,11 @@ interface ResolvedTrade {
   contractMode: ContractMode;
   digit: number;
   label: string;
+}
+
+/** Effective second confirmation streak: only counts when a first one is set. */
+function second2(cfg: MmBotConfig): number {
+  return cfg.confirmationStreak > 0 ? Math.max(0, cfg.confirmation2Streak ?? 0) : 0;
 }
 
 export function resolveMmTrade(cfg: MmBotConfig, opposite = false): ResolvedTrade {
@@ -386,6 +403,7 @@ export function useMmBot({
         runLength: number;
         runEpochs: number[];
         progress: number;
+        stage: 1 | 2;
         timer: ReturnType<typeof setTimeout> | null;
       }
     >
@@ -401,13 +419,14 @@ export function useMmBot({
   }, [balance]);
 
   const syncArmed = useCallback(() => {
-    const needed = cfgRef.current?.confirmationStreak ?? 0;
+    const cfg = cfgRef.current;
     setArmedMarkets(
       Object.entries(armedRef.current).map(([symbol, a]) => ({
         symbol,
         opposite: a.opposite,
         progress: a.progress,
-        needed,
+        needed: a.stage === 2 ? cfg?.confirmation2Streak ?? 0 : cfg?.confirmationStreak ?? 0,
+        stage: a.stage,
         runEpochs: a.runEpochs,
       }))
     );
@@ -567,6 +586,7 @@ export function useMmBot({
           signalLabel: conditionLabel(sigCond),
           runLength,
           confirmation: cfg.confirmationStreak,
+          confirmation2: second2(cfg),
         };
       }
 
@@ -653,16 +673,42 @@ export function useMmBot({
       const armed = armedRef.current[symbol];
       if (armed && digits.length > 0) {
         const cond = armed.opposite ? oppositeCondition(cfg.condition) : cfg.condition;
+        const need2 = second2(cfg);
+        const needed = armed.stage === 2 ? need2 : cfg.confirmationStreak;
         armed.progress = isHit(digits[digits.length - 1], cond)
-          ? Math.min(armed.progress + 1, cfg.confirmationStreak)
+          ? Math.min(armed.progress + 1, needed)
           : 0;
-        if (armed.progress >= cfg.confirmationStreak) {
-          const { runLength, opposite: armedOpposite, runEpochs } = armed;
-          // Purple: the run itself plus the confirmation streak that just completed.
-          addSignalTicks(symbol, [...runEpochs, ...epochs.slice(-cfg.confirmationStreak)]);
-          clearArmed(symbol);
-          tryFire(symbol, runLength, armedOpposite);
-          if (!enabledRef.current) return;
+        if (armed.progress >= needed) {
+          if (armed.stage === 1 && need2 > 0) {
+            // First confirmation done: keep the signal armed and start the
+            // second confirmation streak with its own time limit.
+            armed.runEpochs = [...armed.runEpochs, ...epochs.slice(-cfg.confirmationStreak)];
+            armed.progress = 0;
+            armed.stage = 2;
+            if (armed.timer) clearTimeout(armed.timer);
+            armed.timer = null;
+            const limit2 = cfg.confirm2TimeLimitSeconds ?? 0;
+            if (limit2 > 0) {
+              const stage2Symbol = symbol;
+              const stage2Armed = armed;
+              const stage2Run = armed.runLength;
+              const label = resolveMmTrade(cfg, armed.opposite).label;
+              armed.timer = setTimeout(() => {
+                if (!enabledRef.current || armedRef.current[stage2Symbol] !== stage2Armed) return;
+                delete armedRef.current[stage2Symbol];
+                recordSignal(stage2Symbol, stage2Run, 'expired', label);
+                syncArmed();
+              }, limit2 * 1000);
+            }
+            syncArmed();
+          } else {
+            const { runLength, opposite: armedOpposite, runEpochs } = armed;
+            // Purple: the run, any first confirmation, and the confirmation streak that just completed.
+            addSignalTicks(symbol, [...runEpochs, ...epochs.slice(-needed)]);
+            clearArmed(symbol);
+            tryFire(symbol, runLength, armedOpposite);
+            if (!enabledRef.current) return;
+          }
         } else {
           syncArmed();
         }
@@ -712,8 +758,9 @@ export function useMmBot({
         runLength: number;
         runEpochs: number[];
         progress: number;
+        stage: 1 | 2;
         timer: ReturnType<typeof setTimeout> | null;
-      } = { opposite, runLength: run, runEpochs, progress: 0, timer: null };
+      } = { opposite, runLength: run, runEpochs, progress: 0, stage: 1, timer: null };
       const limit = cfg.confirmTimeLimitSeconds ?? 0;
       if (limit > 0) {
         entry.timer = setTimeout(() => {
@@ -873,6 +920,7 @@ export function useMmBot({
                 signalLabel: sig?.signalLabel ?? '',
                 runLength: sig?.runLength ?? trade.runLength,
                 confirmation: sig?.confirmation ?? cfg.confirmationStreak,
+                confirmation2: sig?.confirmation2 ?? second2(cfg),
                 tradeLabel: trade.label,
                 refire: trade.refire,
               }
