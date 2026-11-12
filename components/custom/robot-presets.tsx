@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { cloudSetItem } from '@/lib/cloud-sync';
+import { CLOUD_SYNC_EVENT } from '@/lib/cloud-sync-keys';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 
 const PRESETS_STORAGE_KEY = 'centurium:robot-presets';
@@ -70,8 +72,8 @@ function readPresets<T>(): RobotPreset<T>[] {
 /**
  * Named sets of robot settings. The plain "Save settings" button keeps working
  * as before (it's what the panel reloads on page open); presets sit beside it
- * so several setups can be kept and switched between by name. Stored in this
- * browser only (localStorage).
+ * so several setups can be kept and switched between by name. Kept in this
+ * browser and synced to the signed-in Deriv account (see lib/cloud-sync).
  */
 export function RobotPresets<T extends object>({ botMode, collect, onLoad, loadDisabled }: Props<T>) {
   const { localize } = useAppTranslations();
@@ -80,12 +82,16 @@ export function RobotPresets<T extends object>({ botMode, collect, onLoad, loadD
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
-    setPresets(readPresets<T>());
+    const load = () => setPresets(readPresets<T>());
+    load();
+    // Presets saved on another device arrive after sign-in.
+    window.addEventListener(CLOUD_SYNC_EVENT, load);
+    return () => window.removeEventListener(CLOUD_SYNC_EVENT, load);
   }, []);
 
   const persist = (next: RobotPreset<T>[]): boolean => {
     try {
-      window.localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(next));
+      cloudSetItem(PRESETS_STORAGE_KEY, JSON.stringify(next));
       setPresets(next);
       return true;
     } catch {
