@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Localize } from '@deriv-com/translations';
+import { cloudSetItem, cloudRemoveItem } from '@/lib/cloud-sync';
+import { CLOUD_SYNC_EVENT } from '@/lib/cloud-sync-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1029,13 +1031,19 @@ export function TradeRobotView({
 
   // Load any saved robot settings once on mount.
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
-      if (!raw) return;
-      applySettings(JSON.parse(raw) as Partial<SavedRobotSettings>);
-    } catch {
-      // Ignore malformed/unavailable storage — fields just keep their defaults.
-    }
+    const load = () => {
+      try {
+        const raw = window.localStorage.getItem(ROBOT_SETTINGS_STORAGE_KEY);
+        if (!raw) return;
+        applySettings(JSON.parse(raw) as Partial<SavedRobotSettings>);
+      } catch {
+        // Ignore malformed/unavailable storage — fields just keep their defaults.
+      }
+    };
+    load();
+    // Settings saved on another device arrive after sign-in.
+    window.addEventListener(CLOUD_SYNC_EVENT, load);
+    return () => window.removeEventListener(CLOUD_SYNC_EVENT, load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1086,7 +1094,7 @@ export function TradeRobotView({
 
   const handleSaveSettings = () => {
     try {
-      window.localStorage.setItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
+      cloudSetItem(ROBOT_SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
       toast.success(localize('Settings saved'));
     } catch {
       toast.error(localize('Could not save settings on this device.'));
@@ -2570,6 +2578,8 @@ export function TradeRobotView({
               frozen={mmBot.frozenTape}
               running={mmBot.running}
               marks={mmBot.tradeMarks}
+              signalTicks={mmBot.signalTicks}
+              armedMarkets={mmBot.armedMarkets}
               watchedCodes={seqPanel.activeCodes}
               currentTradeSymbol={mmBot.currentTrade?.symbol ?? null}
               lastSignalSymbol={mmBot.lastSignal?.symbol ?? null}
