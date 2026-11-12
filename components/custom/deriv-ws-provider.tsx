@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect } from 'react';
 import { useDerivWS } from '@deriv/core';
 import { useAuth } from '@/hooks/use-auth';
 import { useBalanceSync } from '@/hooks/use-balance-sync';
+import { useCloudSync } from '@/hooks/use-cloud-sync';
 import type { DerivWS } from '@deriv/core';
 import type { UseAuthReturn } from '@/hooks/use-auth';
 
@@ -28,6 +29,9 @@ export function DerivWSProvider({ children }: { children: React.ReactNode }) {
     accountId: auth.activeAccountId ?? undefined,
     getFreshUrl: auth.getFreshWsUrl,
   });
+  // Saved strategies follow the Deriv account across devices.
+  useCloudSync(!!auth.wsUrl, auth.activeAccountId);
+
   // Gate on wsUrl, not activeAccountId alone. An account is selected well before
   // its socket is authorized — it is restored from storage at mount and set by
   // completeAuth before the OTP URL resolves — and `balance` on the public
