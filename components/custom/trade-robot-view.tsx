@@ -193,6 +193,8 @@ interface SavedRobotSettings {
   mmLength: string;
   mmConfirmStreak: string;
   mmConfirmTimeLimit: string;
+  mmConfirm2Streak: string;
+  mmConfirm2TimeLimit: string;
   mmMode: MmMode;
   mmCounterKind: MmCounterKind;
   mmCounterDigit: string;
@@ -956,6 +958,8 @@ export function TradeRobotView({
   const [mmLength, setMmLength] = useState('3');
   const [mmConfirmStreak, setMmConfirmStreak] = useState('0');
   const [mmConfirmTimeLimit, setMmConfirmTimeLimit] = useState('0');
+  const [mmConfirm2Streak, setMmConfirm2Streak] = useState('0');
+  const [mmConfirm2TimeLimit, setMmConfirm2TimeLimit] = useState('0');
   const [mmMode, setMmMode] = useState<MmMode>('trend');
   const [mmCounterKind, setMmCounterKind] = useState<MmCounterKind>('under');
   const [mmCounterDigit, setMmCounterDigit] = useState('5');
@@ -1005,6 +1009,8 @@ export function TradeRobotView({
     if (typeof saved.mmLength === 'string') setMmLength(saved.mmLength);
     if (typeof saved.mmConfirmStreak === 'string') setMmConfirmStreak(saved.mmConfirmStreak);
     if (typeof saved.mmConfirmTimeLimit === 'string') setMmConfirmTimeLimit(saved.mmConfirmTimeLimit);
+    if (typeof saved.mmConfirm2Streak === 'string') setMmConfirm2Streak(saved.mmConfirm2Streak);
+    if (typeof saved.mmConfirm2TimeLimit === 'string') setMmConfirm2TimeLimit(saved.mmConfirm2TimeLimit);
     if (typeof saved.mmWatchOpposite === 'boolean') setMmWatchOpposite(saved.mmWatchOpposite);
     if (saved.mmMode === 'trend' || saved.mmMode === 'counter') setMmMode(saved.mmMode);
     if (typeof saved.mmCounterKind === 'string') setMmCounterKind(saved.mmCounterKind);
@@ -1076,6 +1082,8 @@ export function TradeRobotView({
     mmLength,
     mmConfirmStreak,
     mmConfirmTimeLimit,
+    mmConfirm2Streak,
+    mmConfirm2TimeLimit,
     mmMode,
     mmCounterKind,
     mmCounterDigit,
@@ -1347,6 +1355,11 @@ export function TradeRobotView({
       toast.error(localize('Enter a valid Confirmation Streak (0-9) first.'));
       return;
     }
+    const confirmation2Streak = parseInt(mmConfirm2Streak, 10) || 0;
+    if (confirmation2Streak < 0 || confirmation2Streak > 9) {
+      toast.error(localize('Enter a valid Second Confirmation Streak (0-9) first.'));
+      return;
+    }
     const stake = parseFloat(mmInitialStake);
     if (!stake || stake <= 0) {
       toast.error(localize('Enter a valid MM stake first.'));
@@ -1373,6 +1386,8 @@ export function TradeRobotView({
       sequenceLength,
       confirmationStreak,
       confirmTimeLimitSeconds: Math.max(0, parseInt(mmConfirmTimeLimit, 10) || 0),
+      confirmation2Streak: confirmationStreak > 0 ? confirmation2Streak : 0,
+      confirm2TimeLimitSeconds: Math.max(0, parseInt(mmConfirm2TimeLimit, 10) || 0),
       mode: mmMode,
       counterTrade: { kind: mmCounterKind, digit: isNaN(counterDigit) ? 0 : counterDigit },
       initialStake: stake,
@@ -2257,6 +2272,43 @@ export function TradeRobotView({
               />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('After the first confirmation streak completes, this many more consecutive digits of the same watched condition are required before the trade fires. Any other digit resets this count. 0-9. 0 = off. Needs a Confirmation Streak above 0.')}
+              >
+                <Localize i18n_default_text="Second Confirmation Streak" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                max={9}
+                value={mmConfirm2Streak}
+                onChange={(e) => setMmConfirm2Streak(e.target.value)}
+                disabled={(parseInt(mmConfirmStreak, 10) || 0) <= 0}
+              />
+            </div>
+            <div className="space-y-1.5 rounded-lg p-1.5 -m-1.5">
+              <Label
+                className="text-xs font-semibold text-foreground/90"
+                title={localize('Seconds the second confirmation streak may take, counted from the moment the first confirmation completes. If it is not confirmed in time the signal is cancelled. 0 = no time limit.')}
+              >
+                <Localize i18n_default_text="2nd Streak Time Limit (seconds)" />
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                max={3600}
+                value={mmConfirm2TimeLimit}
+                onChange={(e) => setMmConfirm2TimeLimit(e.target.value)}
+                disabled={
+                  (parseInt(mmConfirmStreak, 10) || 0) <= 0 ||
+                  (parseInt(mmConfirm2Streak, 10) || 0) <= 0
+                }
+              />
+            </div>
+          </div>
           <label className="flex cursor-pointer items-start gap-2 px-1.5">
             <input
               type="checkbox"
@@ -2556,7 +2608,7 @@ export function TradeRobotView({
                 <p className="text-muted-foreground">
                   {localize('Armed')}:{' '}
                   {mmBot.armedMarkets
-                    .map((a) => `${getSymbolDisplayName(a.symbol)} ${a.progress}/${a.needed}`)
+                    .map((a) => `${getSymbolDisplayName(a.symbol)} ${a.stage === 2 ? '2nd ' : ''}${a.progress}/${a.needed}`)
                     .join(' · ')}
                 </p>
               )}
