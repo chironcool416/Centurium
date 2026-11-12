@@ -230,11 +230,20 @@ export interface MmArmedMarket {
   opposite: boolean;
   progress: number;
   needed: number;
+  /** Epochs of the ticks that made up the run (shown purple on the tick record). */
+  runEpochs: number[];
+}
+
+/** One tick that belonged to a completed signal (the run or its confirmation streak). */
+export interface MmSignalTick {
+  symbol: string;
+  epoch: number;
 }
 
 /** How many ticks the tick record shows (3 rows of 10). */
 export const MM_TAPE_TICKS = 30;
 const MAX_TRADE_MARKS = 60;
+const MAX_SIGNAL_TICKS = 400;
 
 interface ResolvedTrade {
   contractMode: ContractMode;
@@ -340,6 +349,8 @@ export function useMmBot({
   const [sessionDurationMs, setSessionDurationMs] = useState<number | null>(null);
   const [armedMarkets, setArmedMarkets] = useState<MmArmedMarket[]>([]);
   const [stopInfo, setStopInfo] = useState<MmStopInfo | null>(null);
+  // Ticks of every completed signal (run + confirmation streak), shown purple.
+  const [signalTicks, setSignalTicks] = useState<MmSignalTick[]>([]);
 
   const cfgRef = useRef<MmBotConfig | null>(null);
   const enabledRef = useRef(false);
@@ -373,6 +384,7 @@ export function useMmBot({
       {
         opposite: boolean;
         runLength: number;
+        runEpochs: number[];
         progress: number;
         timer: ReturnType<typeof setTimeout> | null;
       }
@@ -396,8 +408,17 @@ export function useMmBot({
         opposite: a.opposite,
         progress: a.progress,
         needed,
+        runEpochs: a.runEpochs,
       }))
     );
+  }, []);
+
+  const addSignalTicks = useCallback((symbol: string, epochs: number[]) => {
+    if (epochs.length === 0) return;
+    setSignalTicks((prev) => [
+      ...prev.slice(-(MAX_SIGNAL_TICKS - epochs.length)),
+      ...epochs.map((epoch) => ({ symbol, epoch })),
+    ]);
   }, []);
 
   const clearArmed = useCallback(
@@ -443,6 +464,7 @@ export function useMmBot({
       bufRef.current = {};
       setTradeMarks([]);
       setFrozenTape(null);
+      setSignalTicks([]);
       activeTradeRef.current = null;
       pendingContractIdRef.current = null;
       cooldownRef.current = {};
@@ -635,7 +657,9 @@ export function useMmBot({
           ? Math.min(armed.progress + 1, cfg.confirmationStreak)
           : 0;
         if (armed.progress >= cfg.confirmationStreak) {
-          const { runLength, opposite: armedOpposite } = armed;
+          const { runLength, opposite: armedOpposite, runEpochs } = armed;
+          // Purple: the run itself plus the confirmation streak that just completed.
+          addSignalTicks(symbol, [...runEpochs, ...epochs.slice(-cfg.confirmationStreak)]);
           clearArmed(symbol);
           tryFire(symbol, runLength, armedOpposite);
           if (!enabledRef.current) return;
@@ -656,9 +680,17 @@ export function useMmBot({
         opposite = true;
       }
       const run = cfg.sequenceLength;
+      // The run is the `run` ticks just before the tick that broke it (the newest one).
+      const gap = digits.length - epochs.length;
+      const runEpochs: number[] = [];
+      for (let i = digits.length - 1 - run; i <= digits.length - 2; i++) {
+        const e = i - gap >= 0 ? epochs[i - gap] : undefined;
+        if (e !== undefined) runEpochs.push(e);
+      }
 
       // No confirmation wanted: trade straight away.
       if (cfg.confirmationStreak <= 0) {
+        addSignalTicks(symbol, runEpochs);
         tryFire(symbol, run, opposite);
         return;
       }
@@ -668,6 +700,7 @@ export function useMmBot({
       const trade = resolveMmTrade(cfg, opposite);
       const locked = lockedSymbolRef.current;
       if (locked !== null && symbol !== locked) {
+        addSignalTicks(symbol, runEpochs);
         recordSignal(symbol, run, 'locked', trade.label);
         return;
       }
@@ -677,9 +710,10 @@ export function useMmBot({
       const entry: {
         opposite: boolean;
         runLength: number;
+        runEpochs: number[];
         progress: number;
         timer: ReturnType<typeof setTimeout> | null;
-      } = { opposite, runLength: run, progress: 0, timer: null };
+      } = { opposite, runLength: run, runEpochs, progress: 0, timer: null };
       const limit = cfg.confirmTimeLimitSeconds ?? 0;
       if (limit > 0) {
         entry.timer = setTimeout(() => {
@@ -693,7 +727,7 @@ export function useMmBot({
       armedRef.current[symbol] = entry;
       syncArmed();
     },
-    [recordSignal, tryFire, clearArmed, syncArmed]
+    [recordSignal, tryFire, clearArmed, syncArmed, addSignalTicks]
   );
 
   // --- Buy once a quote for the right market / stake is ready.
@@ -894,6 +928,7 @@ export function useMmBot({
     lockedSymbol,
     armedMarkets,
     tradeMarks,
+    signalTicks,
     frozenTape,
     sessionDurationMs,
     stopInfo,
