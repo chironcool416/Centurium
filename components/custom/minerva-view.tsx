@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Localize } from '@deriv-com/translations';
+import { cloudSetItem, cloudRemoveItem } from '@/lib/cloud-sync';
+import { CLOUD_SYNC_EVENT } from '@/lib/cloud-sync-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -726,38 +728,44 @@ export function MinervaView({
   });
 
   const persistProfiles = (next: RobotSettingsProfilesMap) => {
-    window.localStorage.setItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
+    cloudSetItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY, JSON.stringify(next));
   };
 
   // Load any saved profiles once on mount. Also migrates the old single-slot
   // save (from before named profiles existed) into a "Default" profile, so
   // nobody's existing saved settings silently disappear.
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY);
-      let map: RobotSettingsProfilesMap = raw ? (JSON.parse(raw) as RobotSettingsProfilesMap) : {};
+    const load = () => {
+      try {
+        const raw = window.localStorage.getItem(ROBOT_SETTINGS_PROFILES_STORAGE_KEY);
+        let map: RobotSettingsProfilesMap = raw ? (JSON.parse(raw) as RobotSettingsProfilesMap) : {};
 
-      if (!raw) {
-        const legacyRaw = window.localStorage.getItem(LEGACY_ROBOT_SETTINGS_STORAGE_KEY);
-        if (legacyRaw) {
-          const legacySettings = JSON.parse(legacyRaw) as SavedRobotSettings;
-          map = {
-            Default: { name: 'Default', savedAt: Date.now(), settings: legacySettings },
-          };
-          persistProfiles(map);
+        if (!raw) {
+          const legacyRaw = window.localStorage.getItem(LEGACY_ROBOT_SETTINGS_STORAGE_KEY);
+          if (legacyRaw) {
+            const legacySettings = JSON.parse(legacyRaw) as SavedRobotSettings;
+            map = {
+              Default: { name: 'Default', savedAt: Date.now(), settings: legacySettings },
+            };
+            persistProfiles(map);
+          }
         }
-      }
 
-      setRobotProfiles(map);
+        setRobotProfiles(map);
 
-      const lastActive = window.localStorage.getItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
-      if (lastActive && map[lastActive]) {
-        applySettings(map[lastActive].settings);
-        setActiveProfileName(lastActive);
+        const lastActive = window.localStorage.getItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+        if (lastActive && map[lastActive]) {
+          applySettings(map[lastActive].settings);
+          setActiveProfileName(lastActive);
+        }
+      } catch {
+        // Ignore malformed/unavailable storage — fields just keep their defaults.
       }
-    } catch {
-      // Ignore malformed/unavailable storage — fields just keep their defaults.
-    }
+    };
+    load();
+    // Profiles saved on another device arrive after sign-in.
+    window.addEventListener(CLOUD_SYNC_EVENT, load);
+    return () => window.removeEventListener(CLOUD_SYNC_EVENT, load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -770,7 +778,7 @@ export function MinervaView({
       persistProfiles(next);
       setRobotProfiles(next);
       setActiveProfileName(name);
-      window.localStorage.setItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      cloudSetItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
       toast.success(localize('Saved profile "{{name}}"', { name }));
     } catch {
       toast.error(localize('Could not save settings on this device.'));
@@ -783,7 +791,7 @@ export function MinervaView({
     applySettings(profile.settings);
     setActiveProfileName(name);
     try {
-      window.localStorage.setItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
+      cloudSetItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY, name);
     } catch {
       // Non-fatal — the settings are already applied in-memory either way.
     }
@@ -803,7 +811,7 @@ export function MinervaView({
     if (activeProfileName === name) {
       setActiveProfileName(null);
       try {
-        window.localStorage.removeItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
+        cloudRemoveItem(ROBOT_SETTINGS_ACTIVE_PROFILE_STORAGE_KEY);
       } catch {
         // Non-fatal.
       }
