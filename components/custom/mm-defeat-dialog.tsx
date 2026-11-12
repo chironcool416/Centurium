@@ -103,7 +103,7 @@ export function MmDefeatDialog({
                   {info.runLength} {info.signalLabel}s
                   {' · '}
                   {info.confirmation > 0 ? (
-                    <>{info.confirmation} <Localize i18n_default_text="confirmation" /></>
+                    <>{info.confirmation}{info.confirmation2 > 0 ? ` + ${info.confirmation2}` : ''} <Localize i18n_default_text="confirmation" /></>
                   ) : (
                     <Localize i18n_default_text="no confirmation" />
                   )}
