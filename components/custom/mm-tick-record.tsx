@@ -13,7 +13,13 @@ import { cn } from '@/lib/utils';
 import { getSymbolDisplayName } from '@/lib/active-symbols-display-names';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
 import type { SequenceStream } from '@/hooks/use-sequence-scanner';
-import { MM_TAPE_TICKS, type MmTapeEntry, type MmTradeMark } from '@/hooks/use-mm-bot';
+import {
+  MM_TAPE_TICKS,
+  type MmArmedMarket,
+  type MmSignalTick,
+  type MmTapeEntry,
+  type MmTradeMark,
+} from '@/hooks/use-mm-bot';
 
 const COLS = 10;
 
@@ -25,6 +31,10 @@ interface Props {
   running: boolean;
   /** Every trade the robot placed this run, pinned to a tick. */
   marks: MmTradeMark[];
+  /** Ticks of completed signals (run + confirmation streak), shown purple. */
+  signalTicks: MmSignalTick[];
+  /** Markets whose run ended and are still collecting their confirmation streak. */
+  armedMarkets: MmArmedMarket[];
   watchedCodes: string[];
   currentTradeSymbol: string | null;
   lastSignalSymbol: string | null;
@@ -43,6 +53,8 @@ export function MmTickRecord({
   frozen,
   running,
   marks,
+  signalTicks,
+  armedMarkets,
   watchedCodes,
   currentTradeSymbol,
   lastSignalSymbol,
@@ -77,6 +89,20 @@ export function MmTickRecord({
     for (const m of marks) if (m.symbol === symbol) map.set(m.epoch, m);
     return map;
   }, [marks, symbol]);
+
+  // Purple ticks: every completed signal on this market, plus the signal still
+  // being confirmed (its run, and the confirmation ticks collected so far).
+  const purpleEpochs = useMemo(() => {
+    const set = new Set<number>();
+    if (!symbol) return set;
+    for (const t of signalTicks) if (t.symbol === symbol) set.add(t.epoch);
+    const armed = armedMarkets.find((a) => a.symbol === symbol);
+    if (armed && running && tape) {
+      for (const e of armed.runEpochs) set.add(e);
+      if (armed.progress > 0) for (const e of tape.epochs.slice(-armed.progress)) set.add(e);
+    }
+    return set;
+  }, [symbol, signalTicks, armedMarkets, running, tape]);
 
   const n = tape ? tape.digits.length : 0;
   const offset = MM_TAPE_TICKS - n; // empty slots go first so the newest tick lands bottom-right
@@ -122,6 +148,7 @@ export function MmTickRecord({
             const epoch = idx - epochGap >= 0 ? tape.epochs[idx - epochGap] : undefined;
             const mark = epoch !== undefined ? marksByEpoch.get(epoch) : undefined;
             const isNewest = idx === n - 1;
+            const isSignal = epoch !== undefined && purpleEpochs.has(epoch);
             const title = mark
               ? `${mark.label} · ${localize('stake')} ${mark.stake.toFixed(2)} · ${
                   mark.status === 'pending'
@@ -139,7 +166,8 @@ export function MmTickRecord({
                 title={title}
                 className={cn(
                   'flex aspect-square items-center justify-center rounded text-[11px] font-bold tabular-nums',
-                  !mark && 'bg-muted text-foreground/70',
+                  !mark && !isSignal && 'bg-muted text-foreground/70',
+                  !mark && isSignal && 'bg-purple-500/30 text-purple-200 ring-1 ring-purple-400',
                   mark?.status === 'pending' && 'bg-amber-400/30 text-amber-200 ring-1 ring-amber-400',
                   mark?.status === 'won' && 'bg-emerald-500/30 text-emerald-200 ring-1 ring-emerald-400',
                   mark?.status === 'lost' && 'bg-rose-500/30 text-rose-200 ring-1 ring-rose-400',
@@ -161,6 +189,10 @@ export function MmTickRecord({
         <span className="flex items-center gap-1">
           <span className="h-2.5 w-2.5 rounded bg-muted" />
           <Localize i18n_default_text="tick" />
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2.5 w-2.5 rounded bg-purple-500/40 ring-1 ring-purple-400" />
+          <Localize i18n_default_text="signal + confirmation" />
         </span>
         <span className="flex items-center gap-1">
           <span className="h-2.5 w-2.5 rounded bg-amber-400/40 ring-1 ring-amber-400" />
